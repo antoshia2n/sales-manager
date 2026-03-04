@@ -217,6 +217,11 @@ export default function SalesManager({
     uncollectedPayments.reduce((a,p)=>a+p.amount,0),
   [uncollectedPayments])
 
+  // 年間売上見込み（確定 + 未収 + 将来予定すべて）
+  const projectedRev = useMemo(() =>
+    payments.reduce((a,p)=>a+p.amount,0) + singles.reduce((a,s)=>a+s.amount,0),
+  [payments, singles])
+
   const totalProfit         = paidRev - totalExpAnnual
   const projectedProfit     = projectedRev - totalExpAnnual
   const profitRate          = paidRev > 0 ? totalProfit / paidRev * 100 : 0
