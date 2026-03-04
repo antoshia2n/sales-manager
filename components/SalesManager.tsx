@@ -443,7 +443,8 @@ export default function SalesManager({
           const pRes = await fetch("/api/sm-payments", {
             method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(rows),
           })
-          setPayments(prev=>[...prev, ...(await pRes.json())])
+          const newPays = await pRes.json()
+          setPayments(prev=>[...prev, ...newPays])
         }
       }
 
@@ -488,7 +489,8 @@ export default function SalesManager({
         const pRes = await fetch("/api/sm-payments", {
           method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(rows),
         })
-        setPayments(prev=>[...prev, ...(await pRes.json())])
+        const newPays = await pRes.json()
+        setPayments(prev=>[...prev, ...newPays])
       }
 
     } else if (wizard.wizType==="single") {
@@ -503,7 +505,8 @@ export default function SalesManager({
         const res = await fetch("/api/sm-singles", {
           method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body),
         })
-        setSingles(prev=>[...prev, await res.json()])
+        const newSingle = await res.json()
+        setSingles(prev=>[...prev, newSingle])
       }
 
     } else {
@@ -517,7 +520,8 @@ export default function SalesManager({
         const res = await fetch("/api/sm-expenses", {
           method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body),
         })
-        setExpenses(prev=>[...prev, await res.json()])
+        const newExp = await res.json()
+        setExpenses(prev=>[...prev, newExp])
       }
     }
 
