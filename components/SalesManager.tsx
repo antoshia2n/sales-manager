@@ -4,10 +4,10 @@
 import { useState, useMemo } from "react"
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
-  LineChart, Line, CartesianGrid, Cell
+  LineChart, Line, CartesianGrid
 } from "recharts"
 import {
-  TrendingUp, Receipt, CreditCard, Plus, X, RefreshCw,
+  TrendingUp, Receipt, Plus, X, RefreshCw,
   ChevronRight, ChevronLeft, Check, BarChart2, Activity,
   FileText, Target, Users, Briefcase, BookOpen, AlertCircle,
   CheckSquare, Pause, Play, Trash2, Calendar, Pencil
@@ -70,6 +70,7 @@ const SalesTooltip = ({ active, payload, label, expMo }) => {
   if (!active || !payload?.length) return null
   const confirmed   = payload.find(p=>p.dataKey==="確定売上")?.value || 0
   const uncollected = payload.find(p=>p.dataKey==="未収金")?.value || 0
+  const projected   = payload.find(p=>p.dataKey==="見込み")?.value || 0
   const 利益 = confirmed - expMo
   const isRed = 利益 < 0
   return (
@@ -78,25 +79,21 @@ const SalesTooltip = ({ active, payload, label, expMo }) => {
       <div style={{ fontWeight:700, fontSize:13, marginBottom:10 }}>{label}</div>
       {[
         { label:"確定売上",  val:confirmed,    color:C.primary },
-        { label:"未収金",    val:uncollected,  color:C.warn    },
-        { label:"経費（月）", val:expMo,       color:C.danger  },
-      ].map(({label:l,val,color}) => (
+        uncollected > 0 && { label:"未収金",   val:uncollected, color:C.warn    },
+        projected   > 0 && { label:"見込み",   val:projected,   color:C.success },
+        { label:"経費（月）", val:expMo,        color:C.danger  },
+      ].filter(Boolean).map(({label:l,val,color}) => (
         <div key={l} style={{ display:"flex", justifyContent:"space-between", gap:20, marginBottom:4 }}>
           <span style={{ color:C.muted }}>{l}</span>
           <span style={{ fontFamily:MONO, fontWeight:700, color }}>¥{val.toLocaleString()}</span>
         </div>
       ))}
       <div style={{ borderTop:`1px solid ${C.border}`, paddingTop:6, marginTop:6, display:"flex", justifyContent:"space-between" }}>
-        <span style={{ color:C.muted }}>利益</span>
+        <span style={{ color:C.muted }}>確定利益</span>
         <span style={{ fontFamily:MONO, fontWeight:800, color:isRed?C.danger:C.success }}>
           {isRed?"-":""}¥{Math.abs(利益).toLocaleString()}
         </span>
       </div>
-      {uncollected > 0 && (
-        <div style={{ marginTop:8, background:C.warn+"12", border:`1px solid ${C.warn}33`, borderRadius:6, padding:"6px 9px" }}>
-          <span style={{ fontSize:11, color:C.warn }}>未収 ¥{uncollected.toLocaleString()} が含まれていません</span>
-        </div>
-      )}
       {isRed && (
         <div style={{ marginTop:6, background:C.danger+"12", border:`1px solid ${C.danger}33`, borderRadius:6, padding:"6px 9px" }}>
           <span style={{ fontSize:11, color:C.danger }}>赤字 — 黒字化には +¥{Math.abs(利益).toLocaleString()} 必要</span>
@@ -222,10 +219,8 @@ export default function SalesManager({
     payments.reduce((a,p)=>a+p.amount,0) + singles.reduce((a,s)=>a+s.amount,0),
   [payments, singles])
 
-  const totalProfit         = paidRev - totalExpAnnual
-  const projectedProfit     = projectedRev - totalExpAnnual
-  const profitRate          = paidRev > 0 ? totalProfit / paidRev * 100 : 0
-  const projectedProfitRate = projectedRev > 0 ? projectedProfit / projectedRev * 100 : 0
+  const totalProfit = paidRev - totalExpAnnual
+  const profitRate  = paidRev > 0 ? totalProfit / paidRev * 100 : 0
 
   const bizData = useMemo(() => BUSINESSES.map(biz => {
     const rev = payments.filter(p=>p.business===biz&&p.paid).reduce((a,p)=>a+p.amount,0) +
@@ -439,7 +434,7 @@ export default function SalesManager({
         const newContract = await contractRes.json()
         setContracts(prev=>[...prev, newContract])
         const rows = []
-        for (let m = newContract.start_month_idx; m <= CURRENT_M; m++) {
+        for (let m = newContract.start_month_idx; m <= 11; m++) {
           rows.push({ contract_id:newContract.id, name:newContract.name, business:newContract.business,
             month_idx:m, amount:newContract.amount, method:newContract.method,
             type:"継続", paid:m < CURRENT_M })
@@ -1163,8 +1158,14 @@ export default function SalesManager({
                       ))}
                     </div>
                     <div style={{ background:C.success+"10", border:`1px solid ${C.success}33`, borderRadius:8, padding:"10px 14px" }}>
-                      <div style={{ fontSize:11, color:C.success, fontWeight:700, marginBottom:2 }}>継続契約として登録されます</div>
-                      <div style={{ fontSize:11, color:C.sub }}>停止するまで毎月の入金予定が自動追加されます。</div>
+                      {wizard.editId ? (
+                        <div style={{ fontSize:11, color:C.success, fontWeight:700 }}>未払い分の金額・名前が一括更新されます</div>
+                      ) : (
+                        <>
+                          <div style={{ fontSize:11, color:C.success, fontWeight:700, marginBottom:2 }}>継続契約として登録されます</div>
+                          <div style={{ fontSize:11, color:C.sub }}>停止するまで毎月の入金予定が自動追加されます。</div>
+                        </>
+                      )}
                     </div>
                   </div>
                 )}
@@ -1379,7 +1380,7 @@ export default function SalesManager({
                 ? <GhostBtn onClick={()=>setWizard(w=>({...w,step:w.step-1}))}><ChevronLeft size={14} strokeWidth={1.5} />戻る</GhostBtn>
                 : <div />}
               {wizard.step<3
-                ? <Btn onClick={()=>setWizard(w=>({...w,step:w.step+1}))} disabled={!wizard.form.amount&&!wizard.form.name}>次へ<ChevronRight size={14} strokeWidth={1.5} /></Btn>
+                ? <Btn onClick={()=>setWizard(w=>({...w,step:w.step+1}))} disabled={!wizard.form.amount||!wizard.form.name}>次へ<ChevronRight size={14} strokeWidth={1.5} /></Btn>
                 : <Btn onClick={saveWizard} color={C.success} disabled={saving}><Check size={14} strokeWidth={2} />{saving?"保存中...":"保存する"}</Btn>}
             </div>
           </div>
