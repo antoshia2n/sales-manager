@@ -217,8 +217,10 @@ export default function SalesManager({
     uncollectedPayments.reduce((a,p)=>a+p.amount,0),
   [uncollectedPayments])
 
-  const totalProfit = paidRev - totalExpAnnual
-  const profitRate  = paidRev > 0 ? totalProfit / paidRev * 100 : 0
+  const totalProfit         = paidRev - totalExpAnnual
+  const projectedProfit     = projectedRev - totalExpAnnual
+  const profitRate          = paidRev > 0 ? totalProfit / paidRev * 100 : 0
+  const projectedProfitRate = projectedRev > 0 ? projectedProfit / projectedRev * 100 : 0
 
   const bizData = useMemo(() => BUSINESSES.map(biz => {
     const rev = payments.filter(p=>p.business===biz&&p.paid).reduce((a,p)=>a+p.amount,0) +
@@ -234,15 +236,22 @@ export default function SalesManager({
     month: m,
     確定売上: payments.filter(p=>p.month_idx===idx&&p.paid).reduce((a,p)=>a+p.amount,0) +
              singles.filter(s=>s.month_idx===idx).reduce((a,s)=>a+s.amount,0),
-    未収金: payments.filter(p=>p.month_idx===idx&&!p.paid&&idx<=CURRENT_M).reduce((a,p)=>a+p.amount,0),
+    未収金:   payments.filter(p=>p.month_idx===idx&&!p.paid&&idx<=CURRENT_M).reduce((a,p)=>a+p.amount,0),
+    見込み:   payments.filter(p=>p.month_idx===idx&&!p.paid&&idx>CURRENT_M).reduce((a,p)=>a+p.amount,0),
     目標: 1200000,
   })), [payments, singles])
 
-  const profitTrend = useMemo(() => MONTHS.map((m, idx) => ({
-    month: m,
-    利益: (payments.filter(p=>p.month_idx===idx&&p.paid).reduce((a,p)=>a+p.amount,0) +
-           singles.filter(s=>s.month_idx===idx).reduce((a,s)=>a+s.amount,0)) - totalExpMo,
-  })), [payments, singles, totalExpMo])
+  const profitTrend = useMemo(() => MONTHS.map((m, idx) => {
+    const confirmed = payments.filter(p=>p.month_idx===idx&&p.paid).reduce((a,p)=>a+p.amount,0) +
+                      singles.filter(s=>s.month_idx===idx).reduce((a,s)=>a+s.amount,0)
+    const projected = payments.filter(p=>p.month_idx===idx).reduce((a,p)=>a+p.amount,0) +
+                      singles.filter(s=>s.month_idx===idx).reduce((a,s)=>a+s.amount,0)
+    return {
+      month: m,
+      確定利益: confirmed - totalExpMo,
+      見込み利益: idx > CURRENT_M ? projected - totalExpMo : null,
+    }
+  }), [payments, singles, totalExpMo])
 
   const finMonthData = useMemo(() => MONTHS.map((m, idx) => {
     const rev    = payments.filter(p=>p.month_idx===idx&&p.paid).reduce((a,p)=>a+p.amount,0) +
@@ -505,10 +514,10 @@ export default function SalesManager({
           <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
             <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:12 }}>
               {[
-                { label:"確定売上（年）",   value:"¥"+fmtM(paidRev),         sub:"入金済みのみ",       color:C.primary, Icon:TrendingUp },
-                { label:"未収金",          value:"¥"+fmtM(uncollectedTotal), sub:`${uncollectedPayments.length}件 未入金`, color:C.warn, Icon:AlertCircle },
-                { label:"年間純利益",       value:(totalProfit<0?"-":"")+"¥"+fmtM(totalProfit), sub:totalProfit>=0?"黒字":"赤字", color:totalProfit>=0?C.success:C.danger, Icon:Activity },
-                { label:"継続収入（月額）", value:fmtY(contracts.filter(c=>c.type==="recurring"&&c.status==="active").reduce((a,c)=>a+c.amount,0)), sub:`${contracts.filter(c=>c.type==="recurring"&&c.status==="active").length}件継続中`, color:C.success, Icon:RefreshCw },
+                { label:"確定売上（年）",   value:"¥"+fmtM(paidRev),             sub:"入金済みのみ",             color:C.primary, Icon:TrendingUp },
+                { label:"年間見込み売上",  value:"¥"+fmtM(projectedRev),          sub:"確定+未収+将来予定",        color:C.success, Icon:Activity   },
+                { label:"未収金",          value:"¥"+fmtM(uncollectedTotal),      sub:`${uncollectedPayments.length}件 要確認`, color:C.warn, Icon:AlertCircle },
+                { label:"継続収入（月額）", value:fmtY(contracts.filter(c=>c.type==="recurring"&&c.status==="active").reduce((a,c)=>a+c.amount,0)), sub:`${contracts.filter(c=>c.type==="recurring"&&c.status==="active").length}件継続中`, color:C.primary, Icon:RefreshCw },
               ].map((k,i) => (
                 <Card key={i} style={{ borderTop:`2px solid ${k.color}`, padding:"14px 18px" }}>
                   <div style={{ display:"flex", alignItems:"center", gap:5, marginBottom:8 }}>
@@ -523,9 +532,9 @@ export default function SalesManager({
 
             <Card>
               <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12 }}>
-                <SL Icon={BarChart2}>月別売上（確定 + 未収）</SL>
+                <SL Icon={BarChart2}>月別売上（確定 + 未収 + 見込み）</SL>
                 <div style={{ display:"flex", gap:12, fontSize:11, color:C.muted }}>
-                  {[{c:C.primary,l:"確定"},{c:C.warn,l:"未収"}].map(({c,l})=>(
+                  {[{c:C.primary,l:"確定"},{c:C.warn,l:"未収"},{c:C.success+"99",l:"見込み"}].map(({c,l})=>(
                     <span key={l} style={{ display:"flex", alignItems:"center", gap:4 }}>
                       <span style={{ width:8,height:8,borderRadius:2,background:c,display:"inline-block" }} />{l}
                     </span>
@@ -538,24 +547,38 @@ export default function SalesManager({
                   <XAxis dataKey="month" tick={{ fill:C.muted, fontSize:11 }} axisLine={false} tickLine={false} />
                   <YAxis tick={{ fill:C.muted, fontSize:10 }} axisLine={false} tickLine={false} tickFormatter={v=>"¥"+fmtM(v)} />
                   <Tooltip content={<SalesTooltip expMo={totalExpMo} />} />
-                  <Bar dataKey="確定売上" fill={C.primary} radius={[3,3,0,0]} stackId="a" />
-                  <Bar dataKey="未収金" fill={C.warn} radius={[3,3,0,0]} stackId="a" />
+                  <Bar dataKey="確定売上" fill={C.primary} radius={[0,0,0,0]} stackId="a" />
+                  <Bar dataKey="未収金"   fill={C.warn}    radius={[0,0,0,0]} stackId="a" />
+                  <Bar dataKey="見込み"   fill={C.success+"88"} radius={[3,3,0,0]} stackId="a" />
                 </BarChart>
               </ResponsiveContainer>
             </Card>
 
             <Card>
-              <SL Icon={Activity}>月別利益推移（確定ベース）</SL>
+              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12 }}>
+                <SL Icon={Activity}>月別利益推移</SL>
+                <div style={{ display:"flex", gap:12, fontSize:11, color:C.muted }}>
+                  {[{c:C.warn,l:"確定利益"},{c:C.success,l:"見込み利益",dash:true}].map(({c,l,dash})=>(
+                    <span key={l} style={{ display:"flex", alignItems:"center", gap:4 }}>
+                      <span style={{ width:16, height:2, background:c, display:"inline-block", borderRadius:1,
+                        backgroundImage:dash?"repeating-linear-gradient(90deg,"+c+" 0,"+c+" 4px,transparent 4px,transparent 7px)":"none" }} />{l}
+                    </span>
+                  ))}
+                </div>
+              </div>
               <ResponsiveContainer width="100%" height={150}>
                 <LineChart data={profitTrend}>
                   <CartesianGrid strokeDasharray="3 3" stroke={C.border} vertical={false} />
                   <XAxis dataKey="month" tick={{ fill:C.muted, fontSize:11 }} axisLine={false} tickLine={false} />
                   <YAxis tick={{ fill:C.muted, fontSize:10 }} axisLine={false} tickLine={false} tickFormatter={v=>(v>=0?"¥":"-¥")+fmtM(Math.abs(v))} />
                   <Tooltip content={<ProfitTooltip target={300000} />} />
-                  <Line type="monotone" dataKey="利益" stroke={C.warn} strokeWidth={2.5}
-                    dot={{ fill:C.warn, r:3, strokeWidth:0 }} activeDot={{ r:5 }} />
+                  <Line type="monotone" dataKey="確定利益" stroke={C.warn} strokeWidth={2.5}
+                    dot={{ fill:C.warn, r:3, strokeWidth:0 }} activeDot={{ r:5 }} connectNulls={false} />
+                  <Line type="monotone" dataKey="見込み利益" stroke={C.success} strokeWidth={2}
+                    strokeDasharray="5 4" dot={{ fill:C.success, r:3, strokeWidth:0 }} activeDot={{ r:5 }} connectNulls={false} />
                 </LineChart>
               </ResponsiveContainer>
+              <div style={{ fontSize:11, color:C.muted, marginTop:4 }}>破線＝見込み（継続・分割の将来予定を含む）</div>
             </Card>
 
             <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:14 }}>
