@@ -10,7 +10,7 @@ import {
   TrendingUp, Receipt, CreditCard, Plus, X, RefreshCw,
   ChevronRight, ChevronLeft, Check, BarChart2, Activity,
   FileText, Target, Users, Briefcase, BookOpen, AlertCircle,
-  CheckSquare, Pause, Play, Trash2, Calendar
+  CheckSquare, Pause, Play, Trash2, Calendar, Pencil
 } from "lucide-react"
 import type { Contract, Payment, SingleSale, Expense, StrategyEntry } from "@/lib/types"
 
@@ -358,93 +358,172 @@ export default function SalesManager({
   }
 
   /* ─ Wizard ─ */
-  const openWizard = (type) => setWizard({
-    wizType: type, step:1,
-    form: type==="recurring"
-      ? { name:"", business:"しあらぼ", amount:"", method:"振込", startMonthIdx:CURRENT_M, note:"" }
-      : type==="installment"
-      ? { name:"", business:"しあらぼ", amount:"", method:"振込", startMonthIdx:CURRENT_M,
-          manageBy:"count", totalCount:"4", endMonthIdx:String(CURRENT_M+3), note:"" }
-      : type==="single"
-      ? { monthIdx:CURRENT_M, name:"", business:"CW案件", amount:"", method:"振込", note:"" }
-      : { category:"ツール", name:"", amount:"", note:"" }
-  })
+  const openWizard = (type, editItem=null) => {
+    if (editItem) {
+      // 編集モード
+      if (type==="recurring") {
+        setWizard({ wizType:type, step:1, editId:editItem.id, form:{
+          name:editItem.name, business:editItem.business,
+          amount:String(editItem.amount), method:editItem.method,
+          startMonthIdx:editItem.start_month_idx, note:editItem.note||"",
+        }})
+      } else if (type==="installment") {
+        setWizard({ wizType:type, step:1, editId:editItem.id, form:{
+          name:editItem.name, business:editItem.business,
+          amount:String(editItem.amount), method:editItem.method,
+          startMonthIdx:editItem.start_month_idx, manageBy:"count",
+          totalCount:String(editItem.total_count), endMonthIdx:"", note:editItem.note||"",
+        }})
+      } else if (type==="single") {
+        setWizard({ wizType:type, step:1, editId:editItem.id, form:{
+          monthIdx:editItem.month_idx, name:editItem.name,
+          business:editItem.business, amount:String(editItem.amount),
+          method:editItem.method, note:editItem.note||"",
+        }})
+      } else {
+        setWizard({ wizType:type, step:1, editId:editItem.id, form:{
+          category:editItem.category, name:editItem.name,
+          amount:String(editItem.amount), note:editItem.note||"",
+        }})
+      }
+    } else {
+      // 新規モード
+      setWizard({
+        wizType: type, step:1, editId: null,
+        form: type==="recurring"
+          ? { name:"", business:"しあらぼ", amount:"", method:"振込", startMonthIdx:CURRENT_M, note:"" }
+          : type==="installment"
+          ? { name:"", business:"しあらぼ", amount:"", method:"振込", startMonthIdx:CURRENT_M,
+              manageBy:"count", totalCount:"4", endMonthIdx:String(CURRENT_M+3), note:"" }
+          : type==="single"
+          ? { monthIdx:CURRENT_M, name:"", business:"CW案件", amount:"", method:"振込", note:"" }
+          : { category:"ツール", name:"", amount:"", note:"" }
+      })
+    }
+  }
   const updateForm = (k,v) => setWizard(w=>({...w, form:{...w.form,[k]:v}}))
 
   const saveWizard = async () => {
     setSaving(true)
     const f = wizard.form
+    const isEdit = !!wizard.editId
 
     if (wizard.wizType==="recurring") {
-      const contractRes = await fetch("/api/sm-contracts", {
-        method:"POST", headers:{"Content-Type":"application/json"},
-        body: JSON.stringify({
-          name:f.name, business:f.business, type:"recurring",
-          amount:Number(f.amount), method:f.method,
-          start_month_idx:Number(f.startMonthIdx), note:f.note, status:"active",
-        }),
-      })
-      const newContract = await contractRes.json()
-      setContracts(prev=>[...prev, newContract])
-
-      const rows = []
-      for (let m = newContract.start_month_idx; m <= CURRENT_M; m++) {
-        rows.push({ contract_id:newContract.id, name:newContract.name, business:newContract.business,
-          month_idx:m, amount:newContract.amount, method:newContract.method,
-          type:"継続", paid:m < CURRENT_M })
+      const body = {
+        name:f.name, business:f.business, type:"recurring",
+        amount:Number(f.amount), method:f.method,
+        start_month_idx:Number(f.startMonthIdx), note:f.note, status:"active",
       }
-      if (rows.length > 0) {
-        const pRes = await fetch("/api/sm-payments", {
-          method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(rows),
+      if (isEdit) {
+        // 名前・金額・支払方法を更新。paymentsも未払い分を一括更新
+        await fetch(`/api/sm-contracts/${wizard.editId}`, {
+          method:"PUT", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body),
         })
-        const newPays = await pRes.json()
-        setPayments(prev=>[...prev, ...newPays])
+        setContracts(prev => prev.map(c => c.id===wizard.editId ? {...c, ...body, id:wizard.editId} : c))
+        // 未払いのpayments名前・金額・支払方法を更新
+        setPayments(prev => prev.map(p =>
+          p.contract_id===wizard.editId && !p.paid
+            ? {...p, name:f.name, business:f.business, amount:Number(f.amount), method:f.method}
+            : p
+        ))
+        // DB側の未払いpayments一括更新
+        await fetch("/api/sm-payments/bulk", {
+          method:"PATCH", headers:{"Content-Type":"application/json"},
+          body: JSON.stringify({ action:"update_contract_unpaid", contract_id:wizard.editId,
+            name:f.name, business:f.business, amount:Number(f.amount), method:f.method }),
+        })
+      } else {
+        const contractRes = await fetch("/api/sm-contracts", {
+          method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body),
+        })
+        const newContract = await contractRes.json()
+        setContracts(prev=>[...prev, newContract])
+        const rows = []
+        for (let m = newContract.start_month_idx; m <= CURRENT_M; m++) {
+          rows.push({ contract_id:newContract.id, name:newContract.name, business:newContract.business,
+            month_idx:m, amount:newContract.amount, method:newContract.method,
+            type:"継続", paid:m < CURRENT_M })
+        }
+        if (rows.length > 0) {
+          const pRes = await fetch("/api/sm-payments", {
+            method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(rows),
+          })
+          setPayments(prev=>[...prev, ...(await pRes.json())])
+        }
       }
 
     } else if (wizard.wizType==="installment") {
       const count = f.manageBy==="count"
         ? Number(f.totalCount)
         : Number(f.endMonthIdx) - Number(f.startMonthIdx) + 1
-      const contractRes = await fetch("/api/sm-contracts", {
-        method:"POST", headers:{"Content-Type":"application/json"},
-        body: JSON.stringify({
-          name:f.name, business:f.business, type:"installment",
-          amount:Number(f.amount), method:f.method,
-          start_month_idx:Number(f.startMonthIdx), total_count:count, note:f.note, status:"active",
-        }),
-      })
-      const newContract = await contractRes.json()
-      setContracts(prev=>[...prev, newContract])
-
-      const rows = []
-      for (let i=0; i<count; i++) {
-        const m = newContract.start_month_idx + i
-        if (m > 11) break
-        rows.push({ contract_id:newContract.id, name:newContract.name, business:newContract.business,
-          month_idx:m, amount:newContract.amount, method:newContract.method, type:"分割",
-          installment_no:i+1, total_installments:count, paid:m < CURRENT_M })
+      const body = {
+        name:f.name, business:f.business, type:"installment",
+        amount:Number(f.amount), method:f.method,
+        start_month_idx:Number(f.startMonthIdx), total_count:count, note:f.note, status:"active",
       }
-      const pRes = await fetch("/api/sm-payments", {
-        method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(rows),
-      })
-      const newPays = await pRes.json()
-      setPayments(prev=>[...prev, ...newPays])
+      if (isEdit) {
+        await fetch(`/api/sm-contracts/${wizard.editId}`, {
+          method:"PUT", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body),
+        })
+        setContracts(prev => prev.map(c => c.id===wizard.editId ? {...c, ...body, id:wizard.editId} : c))
+        setPayments(prev => prev.map(p =>
+          p.contract_id===wizard.editId && !p.paid
+            ? {...p, name:f.name, business:f.business, amount:Number(f.amount), method:f.method}
+            : p
+        ))
+        await fetch("/api/sm-payments/bulk", {
+          method:"PATCH", headers:{"Content-Type":"application/json"},
+          body: JSON.stringify({ action:"update_contract_unpaid", contract_id:wizard.editId,
+            name:f.name, business:f.business, amount:Number(f.amount), method:f.method }),
+        })
+      } else {
+        const contractRes = await fetch("/api/sm-contracts", {
+          method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body),
+        })
+        const newContract = await contractRes.json()
+        setContracts(prev=>[...prev, newContract])
+        const rows = []
+        for (let i=0; i<count; i++) {
+          const m = newContract.start_month_idx + i
+          if (m > 11) break
+          rows.push({ contract_id:newContract.id, name:newContract.name, business:newContract.business,
+            month_idx:m, amount:newContract.amount, method:newContract.method, type:"分割",
+            installment_no:i+1, total_installments:count, paid:m < CURRENT_M })
+        }
+        const pRes = await fetch("/api/sm-payments", {
+          method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(rows),
+        })
+        setPayments(prev=>[...prev, ...(await pRes.json())])
+      }
 
     } else if (wizard.wizType==="single") {
-      const res = await fetch("/api/sm-singles", {
-        method:"POST", headers:{"Content-Type":"application/json"},
-        body: JSON.stringify({ ...f, month_idx:Number(f.monthIdx), amount:Number(f.amount) }),
-      })
-      const row = await res.json()
-      setSingles(prev=>[...prev, row])
+      const body = { month_idx:Number(f.monthIdx), name:f.name, business:f.business,
+        amount:Number(f.amount), method:f.method, note:f.note }
+      if (isEdit) {
+        await fetch(`/api/sm-singles/${wizard.editId}`, {
+          method:"PUT", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body),
+        })
+        setSingles(prev => prev.map(s => s.id===wizard.editId ? {...body, id:wizard.editId} : s))
+      } else {
+        const res = await fetch("/api/sm-singles", {
+          method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body),
+        })
+        setSingles(prev=>[...prev, await res.json()])
+      }
 
     } else {
-      const res = await fetch("/api/sm-expenses", {
-        method:"POST", headers:{"Content-Type":"application/json"},
-        body: JSON.stringify({ ...f, amount:Number(f.amount) }),
-      })
-      const row = await res.json()
-      setExpenses(prev=>[...prev, row])
+      const body = { category:f.category, name:f.name, amount:Number(f.amount), note:f.note }
+      if (isEdit) {
+        await fetch(`/api/sm-expenses/${wizard.editId}`, {
+          method:"PUT", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body),
+        })
+        setExpenses(prev => prev.map(e => e.id===wizard.editId ? {...body, id:wizard.editId} : e))
+      } else {
+        const res = await fetch("/api/sm-expenses", {
+          method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body),
+        })
+        setExpenses(prev=>[...prev, await res.json()])
+      }
     }
 
     setSaving(false)
@@ -738,6 +817,11 @@ export default function SalesManager({
                               <span style={{ fontSize:12, fontWeight:700, fontFamily:MONO, color:e.paid===false?C.warn:C.text }}>
                                 ¥{e.amount.toLocaleString()}
                               </span>
+                              {e.type==="単発" && (
+                                <button onClick={()=>openWizard("single", e)} style={{ background:"none", border:"none", cursor:"pointer", color:C.muted, display:"flex" }}>
+                                  <Pencil size={11} strokeWidth={1.5} />
+                                </button>
+                              )}
                             </div>
                           ))}
                         </div>
@@ -805,6 +889,9 @@ export default function SalesManager({
                         ? <GhostBtn small onClick={()=>stopContract(c.id)}><Pause size={12} strokeWidth={1.5} />停止</GhostBtn>
                         : <GhostBtn small onClick={()=>resumeContract(c.id)}><Play size={12} strokeWidth={1.5} />再開</GhostBtn>
                       }
+                      <button onClick={()=>openWizard("recurring", c)} style={{ background:"none", border:"none", cursor:"pointer", color:C.muted }}>
+                        <Pencil size={13} strokeWidth={1.5} />
+                      </button>
                       <button onClick={()=>deleteContract(c.id)} style={{ background:"none", border:"none", cursor:"pointer", color:C.muted }}>
                         <Trash2 size={13} strokeWidth={1.5} />
                       </button>
@@ -840,6 +927,9 @@ export default function SalesManager({
                       <button onClick={()=>setExpandedContract(isExp?null:c.id)} style={{ background:"none", border:"none", cursor:"pointer" }}>
                         <ChevronRight size={14} strokeWidth={1.5} color={C.muted}
                           style={{ transform:isExp?"rotate(90deg)":"none", transition:"transform 0.15s" }} />
+                      </button>
+                      <button onClick={()=>openWizard("installment", c)} style={{ background:"none", border:"none", cursor:"pointer", color:C.muted }}>
+                        <Pencil size={13} strokeWidth={1.5} />
                       </button>
                       <button onClick={()=>deleteContract(c.id)} style={{ background:"none", border:"none", cursor:"pointer", color:C.muted }}>
                         <Trash2 size={13} strokeWidth={1.5} />
@@ -902,12 +992,12 @@ export default function SalesManager({
               </div>
             </div>
             <Card style={{ padding:0, overflow:"hidden" }}>
-              <div style={{ display:"grid", gridTemplateColumns:"110px 1fr 120px 1fr 36px", background:C.panel2, padding:"9px 18px" }}>
+              <div style={{ display:"grid", gridTemplateColumns:"110px 1fr 120px 1fr 60px", background:C.panel2, padding:"9px 18px" }}>
                 {["カテゴリ","名前","月額","メモ",""].map((h,i) => <TH key={i}>{h}</TH>)}
               </div>
               {expenses.map(e => (
                 <div key={e.id}
-                  style={{ display:"grid", gridTemplateColumns:"110px 1fr 120px 1fr 36px", padding:"11px 18px", borderTop:`1px solid ${C.border}`, alignItems:"center" }}
+                  style={{ display:"grid", gridTemplateColumns:"110px 1fr 120px 1fr 60px", padding:"11px 18px", borderTop:`1px solid ${C.border}`, alignItems:"center" }}
                   onMouseEnter={ev=>ev.currentTarget.style.background=C.hover}
                   onMouseLeave={ev=>ev.currentTarget.style.background=""}
                 >
@@ -915,9 +1005,14 @@ export default function SalesManager({
                   <div style={{ fontSize:14, fontWeight:600 }}>{e.name}</div>
                   <div style={{ fontSize:14, fontWeight:700, fontFamily:MONO, color:C.danger }}>¥{e.amount.toLocaleString()}</div>
                   <div style={{ fontSize:12, color:C.muted }}>{e.note||"—"}</div>
-                  <button onClick={()=>deleteExpense(e.id)} style={{ background:"none", border:"none", cursor:"pointer", color:C.muted, display:"flex" }}>
-                    <X size={13} strokeWidth={1.5} />
-                  </button>
+                  <div style={{ display:"flex", gap:4 }}>
+                    <button onClick={()=>openWizard("expense", e)} style={{ background:"none", border:"none", cursor:"pointer", color:C.muted, display:"flex" }}>
+                      <Pencil size={13} strokeWidth={1.5} />
+                    </button>
+                    <button onClick={()=>deleteExpense(e.id)} style={{ background:"none", border:"none", cursor:"pointer", color:C.muted, display:"flex" }}>
+                      <X size={13} strokeWidth={1.5} />
+                    </button>
+                  </div>
                 </div>
               ))}
             </Card>
@@ -985,7 +1080,7 @@ export default function SalesManager({
             <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:22 }}>
               <div>
                 <div style={{ fontSize:10, color:C.muted, letterSpacing:2, fontWeight:700, marginBottom:6 }}>
-                  {{ recurring:"継続契約を追加", installment:"分割契約を追加", single:"単発売上を追加", expense:"経費を追加" }[wizard.wizType]}
+                  {wizard.editId ? "編集" : { recurring:"継続契約を追加", installment:"分割契約を追加", single:"単発売上を追加", expense:"経費を追加" }[wizard.wizType]}
                 </div>
                 <div style={{ display:"flex", gap:5 }}>
                   {[1,2,3].map(n=>(
