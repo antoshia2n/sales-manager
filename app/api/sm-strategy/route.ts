@@ -10,7 +10,7 @@ export async function GET() {
 }
 
 export async function PUT(req: Request) {
-  const body = await req.json() // { key, value }
+  const body = await req.json()
   const { data, error } = await supabaseServer
     .from('sm_strategy')
     .upsert({ key: body.key, value: body.value, updated_at: new Date().toISOString() }, { onConflict: 'key' })
