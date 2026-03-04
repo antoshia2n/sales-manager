@@ -344,6 +344,11 @@ export default function SalesManager({
     await fetch(`/api/sm-expenses/${id}`, { method:"DELETE" })
   }
 
+  const deleteSingle = async (id) => {
+    setSingles(prev => prev.filter(s=>s.id!==id))
+    await fetch(`/api/sm-singles/${id}`, { method:"DELETE" })
+  }
+
   const saveStrategy = async (key, value) => {
     await fetch("/api/sm-strategy", {
       method:"PUT",
@@ -819,6 +824,11 @@ export default function SalesManager({
                               {e.type==="単発" && (
                                 <button onClick={()=>openWizard("single", e)} style={{ background:"none", border:"none", cursor:"pointer", color:C.muted, display:"flex" }}>
                                   <Pencil size={11} strokeWidth={1.5} />
+                                </button>
+                              )}
+                              {e.type==="単発" && (
+                                <button onClick={()=>deleteSingle(e.id)} style={{ background:"none", border:"none", cursor:"pointer", color:C.muted, display:"flex" }}>
+                                  <Trash2 size={11} strokeWidth={1.5} />
                                 </button>
                               )}
                             </div>
