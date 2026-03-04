@@ -17,6 +17,17 @@ export async function PATCH(req: Request) {
     return NextResponse.json({ ok: true })
   }
 
+  // 契約編集時: 未払い分の名前・金額・支払方法を一括更新
+  if (body.action === 'update_contract_unpaid') {
+    const { error } = await supabaseServer
+      .from('sm_payments')
+      .update({ name: body.name, business: body.business, amount: body.amount, method: body.method })
+      .eq('contract_id', body.contract_id)
+      .eq('paid', false)
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    return NextResponse.json({ ok: true })
+  }
+
   // 月ごと一括入金確認
   if (body.action === 'mark_month_paid') {
     const { error } = await supabaseServer
