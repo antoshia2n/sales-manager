@@ -81,6 +81,43 @@ const CashflowTooltip = ({ active, payload, label }) => {
   )
 }
 
+
+/* ─── BalanceInput ───────────────────────────── */
+const BalanceInput = ({ value, placeholder, onSave }) => {
+  const [editing, setEditing] = useState(false)
+  const [val, setVal]         = useState(value)
+  useEffect(() => { setVal(value) }, [value])
+  const handleSave = () => { onSave(val); setEditing(false) }
+  if (!editing) return (
+    <div onClick={()=>setEditing(true)} style={{ cursor:"pointer", padding:"4px 8px",
+      borderRadius:6, border:"1px solid transparent", transition:"all 0.15s",
+      fontSize:13, fontFamily:"'DM Mono','JetBrains Mono',monospace",
+      fontWeight:value!==""?700:400, color:value!==""?"#1C1917":"#A8A39C" }}
+      onMouseEnter={ev=>{ev.currentTarget.style.border="1px solid #E2DDD6";ev.currentTarget.style.background="#EEEBE6"}}
+      onMouseLeave={ev=>{ev.currentTarget.style.border="1px solid transparent";ev.currentTarget.style.background=""}}
+    >
+      {value!=="" ? "¥"+Number(value).toLocaleString() : placeholder||"クリックして入力"}
+    </div>
+  )
+  return (
+    <div style={{ display:"flex", gap:6, alignItems:"center" }}>
+      <input autoFocus type="number" value={val} onChange={e=>setVal(e.target.value)}
+        onKeyDown={e=>{if(e.key==="Enter")handleSave();if(e.key==="Escape")setEditing(false)}}
+        style={{ width:110, background:"#EEEBE6", border:"1px solid #6C8EF5", borderRadius:6,
+          padding:"5px 9px", fontSize:13, fontFamily:"'DM Mono','JetBrains Mono',monospace",
+          color:"#1C1917", outline:"none" }}
+      />
+      <button onClick={handleSave} style={{ background:"#4ECBA0", border:"none", borderRadius:5,
+        padding:"4px 8px", cursor:"pointer", color:"#fff", display:"flex", alignItems:"center" }}>
+        <Check size={12} strokeWidth={2}/>
+      </button>
+      <button onClick={()=>setEditing(false)} style={{ background:"none", border:"none", cursor:"pointer", color:"#A8A39C", display:"flex" }}>
+        <X size={12} strokeWidth={1.5}/>
+      </button>
+    </div>
+  )
+}
+
 /* ─── Strategy helper ───────────────────────── */
 const strategyToState = (entries) => {
   const base = { kgi:"", kpi:"", annual:"", months:Object.fromEntries(MONTHS.map(m=>[m,""])) }
