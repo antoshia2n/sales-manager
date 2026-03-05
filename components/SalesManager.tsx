@@ -1,18 +1,18 @@
 // @ts-nocheck
 "use client"
 
-import { useState, useMemo } from "react"
+import { useState, useMemo, useRef, useEffect } from "react"
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
-  LineChart, Line, CartesianGrid, Cell
+  LineChart, Line, CartesianGrid, Cell, ReferenceLine, Area, AreaChart
 } from "recharts"
 import {
   TrendingUp, Receipt, CreditCard, Plus, X, RefreshCw,
   ChevronRight, ChevronLeft, Check, BarChart2, Activity,
   FileText, Target, Users, Briefcase, BookOpen, AlertCircle,
-  CheckSquare, Pause, Play, Trash2, Calendar
+  CheckSquare, Pause, Play, Trash2, Calendar, Wallet, TrendingDown
 } from "lucide-react"
-import type { Contract, Payment, SingleSale, Expense, StrategyEntry } from "@/lib/types"
+import type { Contract, Payment, SingleSale, Expense, StrategyEntry, Balance } from "@/lib/types"
 
 /* ─── Design Tokens ─────────────────────────── */
 const C = {
@@ -54,6 +54,32 @@ const badge = (color, label) => (
     background:color+"15", color, border:`1px solid ${color}30`,
     borderRadius:12, padding:"3px 9px", fontSize:11, fontWeight:700 }}>{label}</span>
 )
+
+/* ─── Cashflow Tooltip ───────────────────────── */
+const CashflowTooltip = ({ active, payload, label }) => {
+  if (!active || !payload?.length) return null
+  const opening  = payload.find(p=>p.dataKey==="月初残高")?.value ?? 0
+  const closing  = payload.find(p=>p.dataKey==="月末残高（確定）")?.value
+  const projClose= payload.find(p=>p.dataKey==="月末残高（見込み）")?.value
+  return (
+    <div style={{ background:C.panel, border:`1px solid ${C.border}`, borderRadius:10,
+      padding:"14px 16px", fontSize:12, boxShadow:"0 6px 24px rgba(0,0,0,0.12)", minWidth:220 }}>
+      <div style={{ fontWeight:700, fontSize:13, marginBottom:10 }}>{label}</div>
+      {[
+        { label:"月初残高",          val:opening,   color:C.sub,     show:true },
+        { label:"月末残高（確定）",   val:closing,   color:C.primary, show:closing!=null },
+        { label:"月末残高（見込み）", val:projClose, color:C.success, show:projClose!=null },
+      ].filter(x=>x.show).map(({label:l,val,color})=>(
+        <div key={l} style={{ display:"flex", justifyContent:"space-between", gap:20, marginBottom:4 }}>
+          <span style={{ color:C.muted }}>{l}</span>
+          <span style={{ fontFamily:MONO, fontWeight:700, color }}>
+            {val<0?"-":""}¥{Math.abs(val).toLocaleString()}
+          </span>
+        </div>
+      ))}
+    </div>
+  )
+}
 
 /* ─── Strategy helper ───────────────────────── */
 const strategyToState = (entries) => {
@@ -205,6 +231,7 @@ export default function SalesManager({
   initialSingles,
   initialExpenses,
   initialStrategy,
+  initialBalances=[],
 }) {
   const [tab, setTab]                 = useState("dashboard")
   const [contracts, setContracts]     = useState(initialContracts)
@@ -215,6 +242,7 @@ export default function SalesManager({
   const [wizard, setWizard]           = useState(null)
   const [activeMonth, setActiveMonth] = useState(null)
   const [expandedContract, setExpandedContract] = useState(null)
+  const [balances, setBalances]       = useState(initialBalances)
   const [saving, setSaving]           = useState(false)
 
   /* ─ Derived ─ */
@@ -309,6 +337,48 @@ export default function SalesManager({
     return { month:m, monthIdx:idx, rev, uncol, exp, profit, projectedRev, projectedProfit, isFuture, byBiz, entries }
   }), [payments, singles, totalExpMo, oneTimeExps])
 
+  /* ─ Cashflow ─ */
+  // 月ごとの収支から残高推移を計算
+  const cashflowData = useMemo(() => {
+    return MONTHS.map((m, idx) => {
+      const bal     = balances.find(b=>b.month_idx===idx)
+      const opening = bal?.opening ?? null
+      const fd      = finMonthData[idx]
+      // 確定ベース月末残高 = 月初残高 + 確定売上 - 経費
+      const closing     = opening != null ? opening + fd.rev - fd.exp : null
+      // 見込みベース月末残高 = 月初残高 + 見込み売上 - 経費
+      const projClosing = opening != null ? opening + fd.projectedRev - fd.exp : null
+      return {
+        month: m,
+        monthIdx: idx,
+        opening,
+        closing,
+        projClosing,
+        hasBalance: opening != null,
+        memo: bal?.memo ?? '',
+      }
+    })
+  }, [balances, finMonthData])
+
+  // 最新の残高から将来を連鎖推計（月初未入力の月は前月末残高から自動計算）
+  const cashflowChained = useMemo(() => {
+    let lastOpening = null
+    return cashflowData.map((d, idx) => {
+      const opening = d.opening != null ? d.opening : lastOpening
+      const fd      = finMonthData[idx]
+      const closing     = opening != null ? opening + fd.rev - fd.exp : null
+      const projClosing = opening != null ? opening + fd.projectedRev - fd.exp : null
+      lastOpening = projClosing  // 次月の月初は今月の見込み末残から連鎖
+      return { ...d, opening, closing, projClosing }
+    })
+  }, [cashflowData, finMonthData])
+
+  // 残高入力された月の現在残高（最新）
+  const latestBalance = useMemo(() => {
+    const entered = cashflowData.filter(d=>d.hasBalance)
+    return entered.length > 0 ? entered[entered.length-1] : null
+  }, [cashflowData])
+
   /* ─ API Actions ─ */
   const togglePaid = async (paymentId) => {
     const p = payments.find(x=>x.id===paymentId)
@@ -381,6 +451,19 @@ export default function SalesManager({
   const deleteExpense = async (id) => {
     setExpenses(prev => prev.filter(e=>e.id!==id))
     await fetch(`/api/sm-expenses/${id}`, { method:"DELETE" })
+  }
+
+  const saveBalance = async (month_idx, opening, memo='') => {
+    const res = await fetch('/api/sm-balances', {
+      method: 'PUT', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ month_idx, opening: Number(opening), memo }),
+    })
+    const row = await res.json()
+    setBalances(prev => {
+      const i = prev.findIndex(b=>b.month_idx===month_idx)
+      if (i>=0) { const n=[...prev]; n[i]=row; return n }
+      return [...prev, row]
+    })
   }
 
   const saveStrategy = async (key, value) => {
@@ -497,6 +580,7 @@ export default function SalesManager({
     { id:"contracts", label:"契約 & 未収金",      Icon:RefreshCw  },
     { id:"expenses",  label:"経費",               Icon:Receipt    },
     { id:"strategy",  label:"戦略",               Icon:Target     },
+    { id:"cashflow",  label:"キャッシュフロー",    Icon:Wallet     },
   ]
 
   return (
@@ -1081,6 +1165,133 @@ export default function SalesManager({
           </div>
         )}
       </main>
+
+        {/* ══ CASHFLOW ══ */}
+        {tab==="cashflow" && (
+          <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
+
+            {/* サマリーカード */}
+            <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:10 }}>
+              {[
+                {
+                  label:"入力済み月数",
+                  value: cashflowData.filter(d=>d.hasBalance).length + "ヶ月",
+                  sub:"月初残高入力済み", color:C.primary,
+                },
+                {
+                  label:"現在の残高（最新入力）",
+                  value: latestBalance ? "¥"+fmtM(latestBalance.opening) : "未入力",
+                  sub: latestBalance ? MONTHS[latestBalance.monthIdx]+"月初" : "月初残高を入力してください",
+                  color: C.success,
+                },
+                {
+                  label:"年末見込み残高",
+                  value: cashflowChained[11].projClosing != null
+                    ? (cashflowChained[11].projClosing<0?"-":"")+"¥"+fmtM(Math.abs(cashflowChained[11].projClosing))
+                    : "—",
+                  sub: cashflowChained[11].projClosing != null
+                    ? cashflowChained[11].projClosing >= 0 ? "黒字見込み" : "赤字警告"
+                    : "月初残高を入力すると自動計算",
+                  color: cashflowChained[11].projClosing != null
+                    ? cashflowChained[11].projClosing >= 0 ? C.success : C.danger
+                    : C.muted,
+                },
+              ].map((k,i) => (
+                <Card key={i} style={{ borderTop:`2px solid ${k.color}`, padding:"12px 16px" }}>
+                  <div style={{ fontSize:10, color:C.muted, letterSpacing:1.5, marginBottom:6 }}>{k.label.toUpperCase()}</div>
+                  <div style={{ fontSize:18, fontWeight:800, fontFamily:MONO, color:k.color, marginBottom:3 }}>{k.value}</div>
+                  <div style={{ fontSize:11, color:C.muted }}>{k.sub}</div>
+                </Card>
+              ))}
+            </div>
+
+            {/* 残高推移グラフ */}
+            <Card>
+              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+                <SL Icon={Wallet}>月末残高推移</SL>
+                <div style={{ display:"flex", gap:14, marginBottom:14 }}>
+                  {[
+                    {c:C.primary,   l:"月末残高（確定）"},
+                    {c:C.success,   l:"月末残高（見込み）", dash:true},
+                  ].map(({c,l,dash})=>(
+                    <div key={l} style={{ display:"flex", alignItems:"center", gap:5, fontSize:11, color:C.muted }}>
+                      <svg width="20" height="2"><line x1="0" y1="1" x2="20" y2="1" stroke={c} strokeWidth="2" strokeDasharray={dash?"4 2":""}/>
+                      </svg>{l}
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <ResponsiveContainer width="100%" height={200}>
+                <LineChart data={cashflowChained.map(d=>({
+                  month: d.month,
+                  "月初残高": d.opening,
+                  "月末残高（確定）": d.closing,
+                  "月末残高（見込み）": d.projClosing,
+                }))}>
+                  <CartesianGrid strokeDasharray="3 3" stroke={C.border} vertical={false} />
+                  <XAxis dataKey="month" tick={{ fill:C.muted, fontSize:11 }} axisLine={false} tickLine={false} />
+                  <YAxis tick={{ fill:C.muted, fontSize:10 }} axisLine={false} tickLine={false}
+                    tickFormatter={v=>(v>=0?"¥":"-¥")+fmtM(Math.abs(v))} />
+                  <Tooltip content={<CashflowTooltip />} />
+                  <ReferenceLine y={0} stroke={C.danger} strokeDasharray="4 2" strokeWidth={1} />
+                  <Line type="monotone" dataKey="月末残高（確定）" stroke={C.primary} strokeWidth={2.5}
+                    dot={{ fill:C.primary, r:3, strokeWidth:0 }} activeDot={{ r:5 }} connectNulls={false} />
+                  <Line type="monotone" dataKey="月末残高（見込み）" stroke={C.success} strokeWidth={2} strokeDasharray="5 3"
+                    dot={{ fill:C.success, r:3, strokeWidth:0 }} activeDot={{ r:4 }} connectNulls={false} />
+                </LineChart>
+              </ResponsiveContainer>
+            </Card>
+
+            {/* 月初残高入力テーブル */}
+            <Card style={{ padding:0, overflow:"hidden" }}>
+              <div style={{ padding:"12px 18px", background:C.panel2, display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+                <span style={{ fontSize:11, fontWeight:700, color:C.muted, letterSpacing:1.5 }}>月初預金残高 入力</span>
+                <span style={{ fontSize:11, color:C.muted }}>入力した月は自動で残高推移に反映されます</span>
+              </div>
+              <div style={{ display:"grid", gridTemplateColumns:"60px 1fr 140px 1fr 1fr 1fr", background:C.panel2,
+                padding:"8px 18px", borderTop:`1px solid ${C.border}` }}>
+                {["月","月初残高","","月末（確定）","月末（見込み）","メモ"].map((h,i)=><TH key={i}>{h}</TH>)}
+              </div>
+              {cashflowChained.map((d,idx) => {
+                const isCurrent = idx === CURRENT_M
+                const isFuture  = idx > CURRENT_M
+                return (
+                  <div key={d.month}
+                    style={{ display:"grid", gridTemplateColumns:"60px 1fr 140px 1fr 1fr 1fr",
+                      padding:"9px 18px", borderTop:`1px solid ${C.border}`, alignItems:"center",
+                      background: isCurrent ? C.primary+"06" : "" }}
+                    onMouseEnter={ev=>ev.currentTarget.style.background=isCurrent?C.primary+"10":C.hover}
+                    onMouseLeave={ev=>ev.currentTarget.style.background=isCurrent?C.primary+"06":""}
+                  >
+                    <div style={{ fontSize:13, fontWeight:isCurrent?800:600, color:isCurrent?C.primary:C.text }}>
+                      {d.month}{isCurrent && <span style={{ fontSize:9, color:C.primary, marginLeft:3 }}>今月</span>}
+                    </div>
+                    <BalanceInput
+                      value={d.hasBalance ? d.opening : ""}
+                      placeholder={d.opening!=null&&!d.hasBalance ? "≈¥"+fmtM(d.opening) : "未入力"}
+                      onSave={v => saveBalance(idx, v, d.memo)}
+                    />
+                    <div style={{ fontSize:11, color:C.muted }}>
+                      {d.hasBalance
+                        ? <span style={{ color:C.success, fontWeight:700, fontSize:11 }}>✓ 入力済み</span>
+                        : isFuture ? <span style={{ color:C.muted }}>（前月末から推計）</span>
+                        : <span style={{ color:C.warn }}>要入力</span>}
+                    </div>
+                    <div style={{ fontSize:13, fontWeight:700, fontFamily:MONO,
+                      color: d.closing!=null ? (d.closing>=0?C.primary:C.danger) : C.muted }}>
+                      {d.closing!=null ? (d.closing<0?"-":"")+"¥"+fmtM(Math.abs(d.closing)) : "—"}
+                    </div>
+                    <div style={{ fontSize:13, fontWeight:700, fontFamily:MONO,
+                      color: d.projClosing!=null ? (d.projClosing>=0?C.success:C.danger) : C.muted }}>
+                      {d.projClosing!=null ? (d.projClosing<0?"-":"")+"¥"+fmtM(Math.abs(d.projClosing)) : "—"}
+                    </div>
+                    <div style={{ fontSize:11, color:C.muted }}>{d.memo||"—"}</div>
+                  </div>
+                )
+              })}
+            </Card>
+          </div>
+        )}
 
       {/* ══ WIZARD ══ */}
       {wizard && (
