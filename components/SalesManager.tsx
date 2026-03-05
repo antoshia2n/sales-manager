@@ -70,31 +70,39 @@ const SalesTooltip = ({ active, payload, label, expMo }) => {
   if (!active || !payload?.length) return null
   const confirmed   = payload.find(p=>p.dataKey==="確定売上")?.value || 0
   const uncollected = payload.find(p=>p.dataKey==="未収金")?.value || 0
+  const projected   = payload.find(p=>p.dataKey==="見込み")?.value || 0
   const 利益 = confirmed - expMo
+  const 見込み利益 = confirmed + uncollected + projected - expMo
   const isRed = 利益 < 0
+  const isProjRed = 見込み利益 < 0
+  const hasProjected = projected > 0
   return (
     <div style={{ background:C.panel, border:`1px solid ${C.border}`, borderRadius:10, padding:"14px 16px",
-      fontSize:12, boxShadow:"0 6px 24px rgba(0,0,0,0.12)", minWidth:210 }}>
+      fontSize:12, boxShadow:"0 6x 24px rgba(0,0,0,0.12)", minWidth:220 }}>
       <div style={{ fontWeight:700, fontSize:13, marginBottom:10 }}>{label}</div>
       {[
         { label:"確定売上",  val:confirmed,    color:C.primary },
-        { label:"未収金",    val:uncollected,  color:C.warn    },
+        { label:"未収金",    val:uncollected,  color:C.warn,   hide:uncollected===0 },
+        { label:"見込み入金", val:projected,   color:C.primary+"99", hide:!hasProjected },
         { label:"経費（月）", val:expMo,       color:C.danger  },
-      ].map(({label:l,val,color}) => (
+      ].filter(x=>!x.hide).map(({label:l,val,color}) => (
         <div key={l} style={{ display:"flex", justifyContent:"space-between", gap:20, marginBottom:4 }}>
           <span style={{ color:C.muted }}>{l}</span>
           <span style={{ fontFamily:MONO, fontWeight:700, color }}>¥{val.toLocaleString()}</span>
         </div>
       ))}
       <div style={{ borderTop:`1px solid ${C.border}`, paddingTop:6, marginTop:6, display:"flex", justifyContent:"space-between" }}>
-        <span style={{ color:C.muted }}>利益</span>
+        <span style={{ color:C.muted }}>確定利益</span>
         <span style={{ fontFamily:MONO, fontWeight:800, color:isRed?C.danger:C.success }}>
           {isRed?"-":""}¥{Math.abs(利益).toLocaleString()}
         </span>
       </div>
-      {uncollected > 0 && (
-        <div style={{ marginTop:8, background:C.warn+"12", border:`1px solid ${C.warn}33`, borderRadius:6, padding:"6px 9px" }}>
-          <span style={{ fontSize:11, color:C.warn }}>未収 ¥{uncollected.toLocaleString()} が含まれていません</span>
+      {hasProjected && (
+        <div style={{ display:"flex", justifyContent:"space-between", marginTop:4 }}>
+          <span style={{ color:C.muted }}>見込み利益</span>
+          <span style={{ fontFamily:MONO, fontWeight:800, color:isProjRed?C.danger:C.success }}>
+            {isProjRed?"-":""}¥{Math.abs(見込み利益).toLocaleString()}
+          </span>
         </div>
       )}
       {isRed && (
@@ -108,30 +116,38 @@ const SalesTooltip = ({ active, payload, label, expMo }) => {
 
 const ProfitTooltip = ({ active, payload, label, target=300000 }) => {
   if (!active || !payload?.length) return null
-  const 利益 = payload[0]?.value || 0
+  const 確定利益 = payload.find(p=>p.dataKey==="確定利益")?.value ?? payload[0]?.value ?? 0
+  const 見込み利益v = payload.find(p=>p.dataKey==="見込み利益")?.value
+  const 利益 = 確定利益
   const isRed = 利益 < 0
+  const isProjRed = 見込み利益v != null && 見込み利益v < 0
   const toTarget = target - 利益
   return (
     <div style={{ background:C.panel, border:`1px solid ${C.border}`, borderRadius:10, padding:"14px 16px",
       fontSize:12, boxShadow:"0 6px 24px rgba(0,0,0,0.12)", minWidth:190 }}>
       <div style={{ fontWeight:700, fontSize:13, marginBottom:10 }}>{label}</div>
-      <div style={{ display:"flex", justifyContent:"space-between", gap:24, marginBottom:10 }}>
-        <span style={{ color:C.muted }}>利益</span>
-        <span style={{ fontFamily:MONO, fontWeight:800, fontSize:15, color:isRed?C.danger:C.success }}>
-          {isRed?"-":""}¥{Math.abs(利益).toLocaleString()}
-        </span>
-      </div>
+      {[
+        { label:"確定利益", val:利益, color:isRed?C.danger:C.success },
+        ...(見込み利益v!=null ? [{ label:"見込み利益", val:見込み利益v, color:isProjRed?C.danger:C.success }] : []),
+      ].map(({label:l,val,color})=>(
+        <div key={l} style={{ display:"flex", justifyContent:"space-between", gap:24, marginBottom:6 }}>
+          <span style={{ color:C.muted }}>{l}</span>
+          <span style={{ fontFamily:MONO, fontWeight:800, fontSize:14, color }}>
+            {val<0?"-":""}¥{Math.abs(val).toLocaleString()}
+          </span>
+        </div>
+      ))}
       {isRed ? (
-        <div style={{ background:C.danger+"12", border:`1px solid ${C.danger}33`, borderRadius:6, padding:"7px 10px" }}>
+        <div style={{ background:C.danger+"12", border:`1px solid ${C.danger}33`, borderRadius:6, padding:"7px 10px", marginTop:6 }}>
           <div style={{ fontSize:11, color:C.danger, fontWeight:700, marginBottom:2 }}>赤字アラート</div>
           <div style={{ fontSize:11, color:C.danger }}>目標まで <strong>¥{toTarget.toLocaleString()}</strong> 不足</div>
         </div>
       ) : toTarget > 0 ? (
-        <div style={{ background:C.warn+"12", border:`1px solid ${C.warn}33`, borderRadius:6, padding:"7px 10px" }}>
+        <div style={{ background:C.warn+"12", border:`1px solid ${C.warn}33`, borderRadius:6, padding:"7px 10px", marginTop:6 }}>
           <div style={{ fontSize:11, color:C.warn }}>目標まであと <strong>¥{toTarget.toLocaleString()}</strong></div>
         </div>
       ) : (
-        <div style={{ background:C.success+"12", border:`1px solid ${C.success}33`, borderRadius:6, padding:"7px 10px" }}>
+        <div style={{ background:C.success+"12", border:`1px solid ${C.success}33`, borderRadius:6, padding:"7px 10px", marginTop:6 }}>
           <div style={{ fontSize:11, color:C.success, fontWeight:700 }}>目標利益 達成</div>
         </div>
       )}
@@ -241,36 +257,57 @@ export default function SalesManager({
     return { biz, rev, share:Math.round(share*100), margin, target, gap:margin-target }
   }), [payments, singles, paidRev, totalExpAnnual])
 
-  const monthlyChartData = useMemo(() => MONTHS.map((m, idx) => ({
-    month: m,
-    確定売上: payments.filter(p=>p.month_idx===idx&&p.paid).reduce((a,p)=>a+p.amount,0) +
-             singles.filter(s=>s.month_idx===idx).reduce((a,s)=>a+s.amount,0),
-    未収金: payments.filter(p=>p.month_idx===idx&&!p.paid&&idx<=CURRENT_M).reduce((a,p)=>a+p.amount,0),
-    目標: 1200000,
-  })), [payments, singles])
+  const monthlyChartData = useMemo(() => MONTHS.map((m, idx) => {
+    const confirmed   = payments.filter(p=>p.month_idx===idx&&p.paid).reduce((a,p)=>a+p.amount,0)
+                      + singles.filter(s=>s.month_idx===idx).reduce((a,s)=>a+s.amount,0)
+    const uncol       = payments.filter(p=>p.month_idx===idx&&!p.paid&&idx<=CURRENT_M).reduce((a,p)=>a+p.amount,0)
+    // 当月以降の予定入金（未払いも含む）
+    const projected   = idx >= CURRENT_M
+      ? payments.filter(p=>p.month_idx===idx&&!p.paid).reduce((a,p)=>a+p.amount,0)
+      : 0
+    return { month:m, 確定売上:confirmed, 未収金:uncol, 見込み:projected, 目標:1200000 }
+  }), [payments, singles])
 
-  const profitTrend = useMemo(() => MONTHS.map((m, idx) => ({
-    month: m,
-    利益: (payments.filter(p=>p.month_idx===idx&&p.paid).reduce((a,p)=>a+p.amount,0) +
-           singles.filter(s=>s.month_idx===idx).reduce((a,s)=>a+s.amount,0)) - totalExpMo,
-  })), [payments, singles, totalExpMo])
+  const profitTrend = useMemo(() => MONTHS.map((m, idx) => {
+    const singles_mo  = singles.filter(s=>s.month_idx===idx).reduce((a,s)=>a+s.amount,0)
+    const confirmedRev= payments.filter(p=>p.month_idx===idx&&p.paid).reduce((a,p)=>a+p.amount,0) + singles_mo
+    // 月ごとの単発経費
+    const moOneTime   = oneTimeExps.filter(e=>e.month_idx===idx).reduce((a,e)=>a+e.amount,0)
+    const expThisMonth= totalExpMo + moOneTime
+    // 見込み = 確定 + 予定入金（未払い含む）
+    const projectedMoRev = confirmedRev + payments.filter(p=>p.month_idx===idx&&!p.paid).reduce((a,p)=>a+p.amount,0)
+    return {
+      month: m,
+      確定利益: confirmedRev - expThisMonth,
+      見込み利益: idx >= CURRENT_M ? projectedMoRev - expThisMonth : null,
+    }
+  }), [payments, singles, totalExpMo, oneTimeExps])
 
   const finMonthData = useMemo(() => MONTHS.map((m, idx) => {
     const rev    = payments.filter(p=>p.month_idx===idx&&p.paid).reduce((a,p)=>a+p.amount,0) +
                    singles.filter(s=>s.month_idx===idx).reduce((a,s)=>a+s.amount,0)
     const uncol  = payments.filter(p=>p.month_idx===idx&&!p.paid&&idx<=CURRENT_M).reduce((a,p)=>a+p.amount,0)
-    const profit = rev - totalExpMo
+    // 月ごとの単発経費を加算
+    const moOneTime   = oneTimeExps.filter(e=>e.month_idx===idx).reduce((a,e)=>a+e.amount,0)
+    const exp         = totalExpMo + moOneTime
+    const profit      = rev - exp
+    // 見込み（当月以降：未払い予定も含む）
+    const projectedRev    = rev + payments.filter(p=>p.month_idx===idx&&!p.paid).reduce((a,p)=>a+p.amount,0)
+    const projectedProfit = projectedRev - exp
+    const isFuture        = idx >= CURRENT_M
     const byBiz  = BUSINESSES.map(biz => ({
       biz,
       v: payments.filter(p=>p.month_idx===idx&&p.business===biz&&p.paid).reduce((a,p)=>a+p.amount,0) +
-         singles.filter(s=>s.month_idx===idx&&s.business===biz).reduce((a,s)=>a+s.amount,0)
+         singles.filter(s=>s.month_idx===idx&&s.business===biz).reduce((a,s)=>a+s.amount,0),
+      proj: payments.filter(p=>p.month_idx===idx&&p.business===biz).reduce((a,p)=>a+p.amount,0) +
+            singles.filter(s=>s.month_idx===idx&&s.business===biz).reduce((a,s)=>a+s.amount,0),
     }))
     const entries = [
       ...payments.filter(p=>p.month_idx===idx),
       ...singles.filter(s=>s.month_idx===idx).map(s=>({...s, type:"単発", paid:true})),
     ]
-    return { month:m, monthIdx:idx, rev, uncol, exp:totalExpMo, profit, byBiz, entries }
-  }), [payments, singles, totalExpMo])
+    return { month:m, monthIdx:idx, rev, uncol, exp, profit, projectedRev, projectedProfit, isFuture, byBiz, entries }
+  }), [payments, singles, totalExpMo, oneTimeExps])
 
   /* ─ API Actions ─ */
   const togglePaid = async (paymentId) => {
@@ -544,7 +581,7 @@ export default function SalesManager({
               <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12 }}>
                 <SL Icon={BarChart2}>月別売上（確定 + 未収）</SL>
                 <div style={{ display:"flex", gap:12, fontSize:11, color:C.muted }}>
-                  {[{c:C.primary,l:"確定"},{c:C.warn,l:"未収"}].map(({c,l})=>(
+                  {[{c:C.primary,l:"確定"},{c:C.warn,l:"未収"},{c:C.primary+"55",l:"見込み"}].map(({c,l})=>(
                     <span key={l} style={{ display:"flex", alignItems:"center", gap:4 }}>
                       <span style={{ width:8,height:8,borderRadius:2,background:c,display:"inline-block" }} />{l}
                     </span>
@@ -559,20 +596,32 @@ export default function SalesManager({
                   <Tooltip content={<SalesTooltip expMo={totalExpMo} />} />
                   <Bar dataKey="確定売上" fill={C.primary} radius={[3,3,0,0]} stackId="a" />
                   <Bar dataKey="未収金" fill={C.warn} radius={[3,3,0,0]} stackId="a" />
+                  <Bar dataKey="見込み" fill={C.primary+"55"} radius={[3,3,0,0]} stackId="a" />
                 </BarChart>
               </ResponsiveContainer>
             </Card>
 
             <Card>
-              <SL Icon={Activity}>月別利益推移（確定ベース）</SL>
+              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+                <SL Icon={Activity}>月別利益推移</SL>
+                <div style={{ display:"flex", gap:14, marginBottom:14 }}>
+                  {[{c:C.success,l:"確定利益"},{c:C.success+"88",l:"見込み利益",dash:true}].map(({c,l,dash})=>(
+                    <div key={l} style={{ display:"flex", alignItems:"center", gap:5, fontSize:11, color:C.muted }}>
+                      <svg width="20" height="2"><line x1="0" y1="1" x2="20" y2="1" stroke={c} strokeWidth="2" strokeDasharray={dash?"4 2":""}/></svg>{l}
+                    </div>
+                  ))}
+                </div>
+              </div>
               <ResponsiveContainer width="100%" height={150}>
                 <LineChart data={profitTrend}>
                   <CartesianGrid strokeDasharray="3 3" stroke={C.border} vertical={false} />
                   <XAxis dataKey="month" tick={{ fill:C.muted, fontSize:11 }} axisLine={false} tickLine={false} />
                   <YAxis tick={{ fill:C.muted, fontSize:10 }} axisLine={false} tickLine={false} tickFormatter={v=>(v>=0?"¥":"-¥")+fmtM(Math.abs(v))} />
                   <Tooltip content={<ProfitTooltip target={300000} />} />
-                  <Line type="monotone" dataKey="利益" stroke={C.warn} strokeWidth={2.5}
-                    dot={{ fill:C.warn, r:3, strokeWidth:0 }} activeDot={{ r:5 }} />
+                  <Line type="monotone" dataKey="確定利益" stroke={C.success} strokeWidth={2.5}
+                    dot={{ fill:C.success, r:3, strokeWidth:0 }} activeDot={{ r:5 }} connectNulls={false} />
+                  <Line type="monotone" dataKey="見込み利益" stroke={C.success+"88"} strokeWidth={2} strokeDasharray="5 3"
+                    dot={{ fill:C.success+"88", r:3, strokeWidth:0 }} activeDot={{ r:4 }} connectNulls={false} />
                 </LineChart>
               </ResponsiveContainer>
             </Card>
@@ -644,25 +693,46 @@ export default function SalesManager({
               const rows = activeMonth!==null ? finMonthData.filter(d=>d.monthIdx===activeMonth) : finMonthData
               const sumRev    = rows.reduce((a,d)=>a+d.rev,0)
               const sumUncol  = rows.reduce((a,d)=>a+d.uncol,0)
-              const sumExp    = activeMonth!==null ? totalExpMo : totalExpAnnual
+              const sumExp    = rows.reduce((a,d)=>a+d.exp,0)
               const sumProfit = sumRev - sumExp
+              const sumProjRev    = rows.reduce((a,d)=>a+d.projectedRev,0)
+              const sumProjProfit = rows.reduce((a,d)=>a+d.projectedProfit,0)
               const rate      = sumRev>0 ? (sumProfit/sumRev*100).toFixed(1) : "0.0"
               return (
-                <div style={{ display:"grid", gridTemplateColumns:"repeat(5,1fr)", gap:10, marginBottom:14 }}>
-                  {[
-                    { label:"確定売上", val:sumRev,    color:C.primary, pfx:"" },
-                    { label:"未収金",   val:sumUncol,  color:C.warn,    pfx:"" },
-                    { label:"経費",     val:sumExp,    color:C.danger,  pfx:"-" },
-                    { label:"利益",     val:sumProfit, color:sumProfit>=0?C.success:C.danger, pfx:sumProfit<0?"-":"" },
-                    { label:"利益率",   disp:rate+"%", color:sumProfit>=0?C.success:C.danger },
-                  ].map((k,i) => (
-                    <div key={i} style={{ background:C.panel, border:`1px solid ${C.border}`, borderRadius:8, padding:"10px 14px", borderLeft:`3px solid ${k.color}` }}>
-                      <div style={{ fontSize:10, color:C.muted, marginBottom:4, letterSpacing:1 }}>{k.label.toUpperCase()}</div>
-                      <div style={{ fontSize:17, fontWeight:800, fontFamily:MONO, color:k.color }}>
-                        {k.disp || (k.pfx+"¥"+fmtM(Math.abs(k.val)))}
+                <div style={{ display:"flex", flexDirection:"column", gap:10, marginBottom:14 }}>
+                  <div style={{ display:"grid", gridTemplateColumns:"repeat(5,1fr)", gap:10 }}>
+                    {[
+                      { label:"確定売上", val:sumRev,    color:C.primary, pfx:"" },
+                      { label:"未収金",   val:sumUncol,  color:C.warn,    pfx:"" },
+                      { label:"経費",     val:sumExp,    color:C.danger,  pfx:"-" },
+                      { label:"確定利益", val:sumProfit, color:sumProfit>=0?C.success:C.danger, pfx:sumProfit<0?"-":"" },
+                      { label:"利益率",   disp:rate+"%", color:sumProfit>=0?C.success:C.danger },
+                    ].map((k,i) => (
+                      <div key={i} style={{ background:C.panel, border:`1px solid ${C.border}`, borderRadius:8, padding:"10px 14px", borderLeft:`3px solid ${k.color}` }}>
+                        <div style={{ fontSize:10, color:C.muted, marginBottom:4, letterSpacing:1 }}>{k.label.toUpperCase()}</div>
+                        <div style={{ fontSize:17, fontWeight:800, fontFamily:MONO, color:k.color }}>
+                          {k.disp || (k.pfx+"¥"+fmtM(Math.abs(k.val)))}
+                        </div>
                       </div>
-                    </div>
-                  ))}
+                    ))}
+                  </div>
+                  {/* 見込み行 */}
+                  <div style={{ display:"grid", gridTemplateColumns:"repeat(2,1fr)", gap:10 }}>
+                    {[
+                      { label:"見込み売上", val:sumProjRev,    color:C.primary,                              sub:"未収＋将来予定含む" },
+                      { label:"見込み利益", val:sumProjProfit, color:sumProjProfit>=0?C.success:C.danger,    sub:sumProjProfit>=0?"黒字見込み":"赤字見込み" },
+                    ].map((k,i) => (
+                      <div key={i} style={{ background:k.color+"0a", border:`1px dashed ${k.color}55`, borderRadius:8, padding:"10px 14px", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+                        <div>
+                          <div style={{ fontSize:10, color:C.muted, marginBottom:3, letterSpacing:1 }}>{k.label.toUpperCase()}</div>
+                          <div style={{ fontSize:11, color:C.muted }}>{k.sub}</div>
+                        </div>
+                        <div style={{ fontSize:20, fontWeight:800, fontFamily:MONO, color:k.color }}>
+                          {k.val<0?"-":""}¥{fmtM(Math.abs(k.val))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               )
             })()}
@@ -679,10 +749,10 @@ export default function SalesManager({
                   }}>
                     <span style={{ fontSize:13, fontWeight:700, textAlign:"left" }}>{d.month}</span>
                     {[
-                      { label:"確定売上", val:d.rev,  color:C.primary, neg:false },
-                      { label:"未収金",   val:d.uncol, color:C.warn,   neg:false, hide:d.uncol===0 },
-                      { label:"経費",     val:d.exp,  color:C.danger,  neg:true  },
-                      { label:"利益",     val:d.profit,color:d.profit>=0?C.success:C.danger, neg:d.profit<0 },
+                      { label:"確定売上",   val:d.rev,  color:C.primary, neg:false },
+                      { label:"未収金",     val:d.uncol, color:C.warn,   neg:false, hide:d.uncol===0 },
+                      { label:d.isFuture?"見込み利益":"確定利益", val:d.isFuture?d.projectedProfit:d.profit, color:(d.isFuture?d.projectedProfit:d.profit)>=0?C.success:C.danger, neg:(d.isFuture?d.projectedProfit:d.profit)<0 },
+                      { label:"経費",       val:d.exp,  color:C.danger,  neg:true, hide:!d.isFuture  },
                     ].map(({label,val,color,neg,hide}) => hide ? <div key={label}/> : (
                       <div key={label} style={{ textAlign:"left" }}>
                         <div style={{ fontSize:10, color:C.muted, marginBottom:1 }}>{label}</div>
