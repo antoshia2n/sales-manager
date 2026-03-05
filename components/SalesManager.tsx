@@ -326,8 +326,8 @@ export default function SalesManager({
     const confirmed   = payments.filter(p=>p.month_idx===idx&&p.paid).reduce((a,p)=>a+p.amount,0)
                       + singles.filter(s=>s.month_idx===idx).reduce((a,s)=>a+s.amount,0)
     const uncol       = payments.filter(p=>p.month_idx===idx&&!p.paid&&idx<=CURRENT_M).reduce((a,p)=>a+p.amount,0)
-    // 当月以降の予定入金（未払いも含む）
-    const projected   = idx >= CURRENT_M
+    // 見込み = 未来月のみ（当月の未払いは「未収金」に含まれるためダブルカウント防止）
+    const projected   = idx > CURRENT_M
       ? payments.filter(p=>p.month_idx===idx&&!p.paid).reduce((a,p)=>a+p.amount,0)
       : 0
     return { month:m, 確定売上:confirmed, 未収金:uncol, 見込み:projected, 目標:1200000 }
