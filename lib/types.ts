@@ -48,3 +48,10 @@ export type StrategyEntry = {
   key: string
   value: string
 }
+
+export type Balance = {
+  id: number
+  month_idx: number
+  opening: number
+  memo: string
+}
