@@ -4,13 +4,13 @@
 import { useState, useMemo } from "react"
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
-  LineChart, Line, CartesianGrid
+  LineChart, Line, CartesianGrid, Cell
 } from "recharts"
 import {
-  TrendingUp, Receipt, Plus, X, RefreshCw,
+  TrendingUp, Receipt, CreditCard, Plus, X, RefreshCw,
   ChevronRight, ChevronLeft, Check, BarChart2, Activity,
   FileText, Target, Users, Briefcase, BookOpen, AlertCircle,
-  CheckSquare, Pause, Play, Trash2, Calendar, Pencil
+  CheckSquare, Pause, Play, Trash2, Calendar
 } from "lucide-react"
 import type { Contract, Payment, SingleSale, Expense, StrategyEntry } from "@/lib/types"
 
@@ -70,7 +70,6 @@ const SalesTooltip = ({ active, payload, label, expMo }) => {
   if (!active || !payload?.length) return null
   const confirmed   = payload.find(p=>p.dataKey==="確定売上")?.value || 0
   const uncollected = payload.find(p=>p.dataKey==="未収金")?.value || 0
-  const projected   = payload.find(p=>p.dataKey==="見込み")?.value || 0
   const 利益 = confirmed - expMo
   const isRed = 利益 < 0
   return (
@@ -79,21 +78,25 @@ const SalesTooltip = ({ active, payload, label, expMo }) => {
       <div style={{ fontWeight:700, fontSize:13, marginBottom:10 }}>{label}</div>
       {[
         { label:"確定売上",  val:confirmed,    color:C.primary },
-        uncollected > 0 && { label:"未収金",   val:uncollected, color:C.warn    },
-        projected   > 0 && { label:"見込み",   val:projected,   color:C.success },
-        { label:"経費（月）", val:expMo,        color:C.danger  },
-      ].filter(Boolean).map(({label:l,val,color}) => (
+        { label:"未収金",    val:uncollected,  color:C.warn    },
+        { label:"経費（月）", val:expMo,       color:C.danger  },
+      ].map(({label:l,val,color}) => (
         <div key={l} style={{ display:"flex", justifyContent:"space-between", gap:20, marginBottom:4 }}>
           <span style={{ color:C.muted }}>{l}</span>
           <span style={{ fontFamily:MONO, fontWeight:700, color }}>¥{val.toLocaleString()}</span>
         </div>
       ))}
       <div style={{ borderTop:`1px solid ${C.border}`, paddingTop:6, marginTop:6, display:"flex", justifyContent:"space-between" }}>
-        <span style={{ color:C.muted }}>確定利益</span>
+        <span style={{ color:C.muted }}>利益</span>
         <span style={{ fontFamily:MONO, fontWeight:800, color:isRed?C.danger:C.success }}>
           {isRed?"-":""}¥{Math.abs(利益).toLocaleString()}
         </span>
       </div>
+      {uncollected > 0 && (
+        <div style={{ marginTop:8, background:C.warn+"12", border:`1px solid ${C.warn}33`, borderRadius:6, padding:"6px 9px" }}>
+          <span style={{ fontSize:11, color:C.warn }}>未収 ¥{uncollected.toLocaleString()} が含まれていません</span>
+        </div>
+      )}
       {isRed && (
         <div style={{ marginTop:6, background:C.danger+"12", border:`1px solid ${C.danger}33`, borderRadius:6, padding:"6px 9px" }}>
           <span style={{ fontSize:11, color:C.danger }}>赤字 — 黒字化には +¥{Math.abs(利益).toLocaleString()} 必要</span>
@@ -199,8 +202,12 @@ export default function SalesManager({
   const [saving, setSaving]           = useState(false)
 
   /* ─ Derived ─ */
-  const totalExpMo     = useMemo(() => expenses.reduce((a,e)=>a+e.amount,0), [expenses])
-  const totalExpAnnual = totalExpMo * 12
+  // 月額固定経費と単発経費を分離
+  const recurringExps   = useMemo(() => expenses.filter(e => e.is_recurring !== false), [expenses])
+  const oneTimeExps     = useMemo(() => expenses.filter(e => e.is_recurring === false),  [expenses])
+  const totalExpMo      = useMemo(() => recurringExps.reduce((a,e)=>a+e.amount,0), [recurringExps])
+  const oneTimeExpTotal = useMemo(() => oneTimeExps.reduce((a,e)=>a+e.amount,0),   [oneTimeExps])
+  const totalExpAnnual  = totalExpMo * 12 + oneTimeExpTotal
 
   const paidRev = useMemo(() =>
     payments.filter(p=>p.paid).reduce((a,p)=>a+p.amount,0) +
@@ -214,10 +221,12 @@ export default function SalesManager({
     uncollectedPayments.reduce((a,p)=>a+p.amount,0),
   [uncollectedPayments])
 
-  // 年間売上見込み（確定 + 未収 + 将来予定すべて）
-  const projectedRev = useMemo(() =>
-    payments.reduce((a,p)=>a+p.amount,0) + singles.reduce((a,s)=>a+s.amount,0),
-  [payments, singles])
+  // 見込み売上 = 確定 + 未収 + 今後の予定入金
+  const futurePayments  = useMemo(() =>
+    payments.filter(p => !p.paid && p.month_idx > CURRENT_M).reduce((a,p)=>a+p.amount,0),
+  [payments])
+  const projectedRev    = paidRev + uncollectedTotal + futurePayments
+  const projectedProfit = projectedRev - totalExpAnnual
 
   const totalProfit = paidRev - totalExpAnnual
   const profitRate  = paidRev > 0 ? totalProfit / paidRev * 100 : 0
@@ -236,22 +245,15 @@ export default function SalesManager({
     month: m,
     確定売上: payments.filter(p=>p.month_idx===idx&&p.paid).reduce((a,p)=>a+p.amount,0) +
              singles.filter(s=>s.month_idx===idx).reduce((a,s)=>a+s.amount,0),
-    未収金:   payments.filter(p=>p.month_idx===idx&&!p.paid&&idx<=CURRENT_M).reduce((a,p)=>a+p.amount,0),
-    見込み:   payments.filter(p=>p.month_idx===idx&&!p.paid&&idx>CURRENT_M).reduce((a,p)=>a+p.amount,0),
+    未収金: payments.filter(p=>p.month_idx===idx&&!p.paid&&idx<=CURRENT_M).reduce((a,p)=>a+p.amount,0),
     目標: 1200000,
   })), [payments, singles])
 
-  const profitTrend = useMemo(() => MONTHS.map((m, idx) => {
-    const confirmed = payments.filter(p=>p.month_idx===idx&&p.paid).reduce((a,p)=>a+p.amount,0) +
-                      singles.filter(s=>s.month_idx===idx).reduce((a,s)=>a+s.amount,0)
-    const projected = payments.filter(p=>p.month_idx===idx).reduce((a,p)=>a+p.amount,0) +
-                      singles.filter(s=>s.month_idx===idx).reduce((a,s)=>a+s.amount,0)
-    return {
-      month: m,
-      確定利益: confirmed - totalExpMo,
-      見込み利益: idx > CURRENT_M ? projected - totalExpMo : null,
-    }
-  }), [payments, singles, totalExpMo])
+  const profitTrend = useMemo(() => MONTHS.map((m, idx) => ({
+    month: m,
+    利益: (payments.filter(p=>p.month_idx===idx&&p.paid).reduce((a,p)=>a+p.amount,0) +
+           singles.filter(s=>s.month_idx===idx).reduce((a,s)=>a+s.amount,0)) - totalExpMo,
+  })), [payments, singles, totalExpMo])
 
   const finMonthData = useMemo(() => MONTHS.map((m, idx) => {
     const rev    = payments.filter(p=>p.month_idx===idx&&p.paid).reduce((a,p)=>a+p.amount,0) +
@@ -344,11 +346,6 @@ export default function SalesManager({
     await fetch(`/api/sm-expenses/${id}`, { method:"DELETE" })
   }
 
-  const deleteSingle = async (id) => {
-    setSingles(prev => prev.filter(s=>s.id!==id))
-    await fetch(`/api/sm-singles/${id}`, { method:"DELETE" })
-  }
-
   const saveStrategy = async (key, value) => {
     await fetch("/api/sm-strategy", {
       method:"PUT",
@@ -358,139 +355,42 @@ export default function SalesManager({
   }
 
   /* ─ Wizard ─ */
-  const openWizard = (type, editItem=null) => {
-    if (editItem) {
-      // 編集モード
-      if (type==="recurring") {
-        setWizard({ wizType:type, step:1, editId:editItem.id, form:{
-          name:editItem.name, business:editItem.business,
-          amount:String(editItem.amount), method:editItem.method,
-          startMonthIdx:editItem.start_month_idx, note:editItem.note||"",
-        }})
-      } else if (type==="installment") {
-        setWizard({ wizType:type, step:1, editId:editItem.id, form:{
-          name:editItem.name, business:editItem.business,
-          amount:String(editItem.amount), method:editItem.method,
-          startMonthIdx:editItem.start_month_idx, manageBy:"count",
-          totalCount:String(editItem.total_count), endMonthIdx:"", note:editItem.note||"",
-        }})
-      } else if (type==="single") {
-        setWizard({ wizType:type, step:1, editId:editItem.id, form:{
-          monthIdx:editItem.month_idx, name:editItem.name,
-          business:editItem.business, amount:String(editItem.amount),
-          method:editItem.method, note:editItem.note||"",
-        }})
-      } else {
-        setWizard({ wizType:type, step:1, editId:editItem.id, form:{
-          category:editItem.category, name:editItem.name,
-          amount:String(editItem.amount), note:editItem.note||"",
-        }})
-      }
-    } else {
-      // 新規モード
-      setWizard({
-        wizType: type, step:1, editId: null,
-        form: type==="recurring"
-          ? { name:"", business:"しあらぼ", amount:"", method:"振込", startMonthIdx:CURRENT_M, note:"" }
-          : type==="installment"
-          ? { name:"", business:"しあらぼ", amount:"", method:"振込", startMonthIdx:CURRENT_M,
-              manageBy:"count", totalCount:"4", endMonthIdx:String(CURRENT_M+3), note:"" }
-          : type==="single"
-          ? { monthIdx:CURRENT_M, name:"", business:"CW案件", amount:"", method:"振込", note:"" }
-          : { category:"ツール", name:"", amount:"", note:"" }
-      })
-    }
-  }
+  const openWizard = (type) => setWizard({
+    wizType: type, step:1,
+    form: type==="recurring"
+      ? { name:"", business:"しあらぼ", amount:"", method:"振込", startMonthIdx:CURRENT_M, note:"" }
+      : type==="installment"
+      ? { name:"", business:"しあらぼ", amount:"", method:"振込", startMonthIdx:CURRENT_M,
+          manageBy:"count", totalCount:"4", endMonthIdx:String(CURRENT_M+3), note:"" }
+      : type==="single"
+      ? { monthIdx:CURRENT_M, name:"", business:"CW案件", amount:"", method:"振込", note:"" }
+      : { category:"ツール", name:"", amount:"", note:"", isRecurring:true, monthIdx:CURRENT_M }
+  })
   const updateForm = (k,v) => setWizard(w=>({...w, form:{...w.form,[k]:v}}))
 
   const saveWizard = async () => {
     setSaving(true)
     const f = wizard.form
-    const isEdit = !!wizard.editId
 
     if (wizard.wizType==="recurring") {
-      const body = {
-        name:f.name, business:f.business, type:"recurring",
-        amount:Number(f.amount), method:f.method,
-        start_month_idx:Number(f.startMonthIdx), note:f.note, status:"active",
-      }
-      if (isEdit) {
-        // 名前・金額・支払方法を更新。paymentsも未払い分を一括更新
-        await fetch(`/api/sm-contracts/${wizard.editId}`, {
-          method:"PUT", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body),
-        })
-        setContracts(prev => prev.map(c => c.id===wizard.editId ? {...c, ...body, id:wizard.editId} : c))
-        // 未払いのpayments名前・金額・支払方法を更新
-        setPayments(prev => prev.map(p =>
-          p.contract_id===wizard.editId && !p.paid
-            ? {...p, name:f.name, business:f.business, amount:Number(f.amount), method:f.method}
-            : p
-        ))
-        // DB側の未払いpayments一括更新
-        await fetch("/api/sm-payments/bulk", {
-          method:"PATCH", headers:{"Content-Type":"application/json"},
-          body: JSON.stringify({ action:"update_contract_unpaid", contract_id:wizard.editId,
-            name:f.name, business:f.business, amount:Number(f.amount), method:f.method }),
-        })
-      } else {
-        const contractRes = await fetch("/api/sm-contracts", {
-          method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body),
-        })
-        const newContract = await contractRes.json()
-        setContracts(prev=>[...prev, newContract])
-        const rows = []
-        for (let m = newContract.start_month_idx; m <= 11; m++) {
-          rows.push({ contract_id:newContract.id, name:newContract.name, business:newContract.business,
-            month_idx:m, amount:newContract.amount, method:newContract.method,
-            type:"継続", paid:m < CURRENT_M })
-        }
-        if (rows.length > 0) {
-          const pRes = await fetch("/api/sm-payments", {
-            method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(rows),
-          })
-          const newPays = await pRes.json()
-          setPayments(prev=>[...prev, ...newPays])
-        }
-      }
+      const contractRes = await fetch("/api/sm-contracts", {
+        method:"POST", headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({
+          name:f.name, business:f.business, type:"recurring",
+          amount:Number(f.amount), method:f.method,
+          start_month_idx:Number(f.startMonthIdx), note:f.note, status:"active",
+        }),
+      })
+      const newContract = await contractRes.json()
+      setContracts(prev=>[...prev, newContract])
 
-    } else if (wizard.wizType==="installment") {
-      const count = f.manageBy==="count"
-        ? Number(f.totalCount)
-        : Number(f.endMonthIdx) - Number(f.startMonthIdx) + 1
-      const body = {
-        name:f.name, business:f.business, type:"installment",
-        amount:Number(f.amount), method:f.method,
-        start_month_idx:Number(f.startMonthIdx), total_count:count, note:f.note, status:"active",
+      const rows = []
+      for (let m = newContract.start_month_idx; m <= CURRENT_M; m++) {
+        rows.push({ contract_id:newContract.id, name:newContract.name, business:newContract.business,
+          month_idx:m, amount:newContract.amount, method:newContract.method,
+          type:"継続", paid:m < CURRENT_M })
       }
-      if (isEdit) {
-        await fetch(`/api/sm-contracts/${wizard.editId}`, {
-          method:"PUT", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body),
-        })
-        setContracts(prev => prev.map(c => c.id===wizard.editId ? {...c, ...body, id:wizard.editId} : c))
-        setPayments(prev => prev.map(p =>
-          p.contract_id===wizard.editId && !p.paid
-            ? {...p, name:f.name, business:f.business, amount:Number(f.amount), method:f.method}
-            : p
-        ))
-        await fetch("/api/sm-payments/bulk", {
-          method:"PATCH", headers:{"Content-Type":"application/json"},
-          body: JSON.stringify({ action:"update_contract_unpaid", contract_id:wizard.editId,
-            name:f.name, business:f.business, amount:Number(f.amount), method:f.method }),
-        })
-      } else {
-        const contractRes = await fetch("/api/sm-contracts", {
-          method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body),
-        })
-        const newContract = await contractRes.json()
-        setContracts(prev=>[...prev, newContract])
-        const rows = []
-        for (let i=0; i<count; i++) {
-          const m = newContract.start_month_idx + i
-          if (m > 11) break
-          rows.push({ contract_id:newContract.id, name:newContract.name, business:newContract.business,
-            month_idx:m, amount:newContract.amount, method:newContract.method, type:"分割",
-            installment_no:i+1, total_installments:count, paid:m < CURRENT_M })
-        }
+      if (rows.length > 0) {
         const pRes = await fetch("/api/sm-payments", {
           method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(rows),
         })
@@ -498,36 +398,56 @@ export default function SalesManager({
         setPayments(prev=>[...prev, ...newPays])
       }
 
-    } else if (wizard.wizType==="single") {
-      const body = { month_idx:Number(f.monthIdx), name:f.name, business:f.business,
-        amount:Number(f.amount), method:f.method, note:f.note }
-      if (isEdit) {
-        await fetch(`/api/sm-singles/${wizard.editId}`, {
-          method:"PUT", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body),
-        })
-        setSingles(prev => prev.map(s => s.id===wizard.editId ? {...body, id:wizard.editId} : s))
-      } else {
-        const res = await fetch("/api/sm-singles", {
-          method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body),
-        })
-        const newSingle = await res.json()
-        setSingles(prev=>[...prev, newSingle])
+    } else if (wizard.wizType==="installment") {
+      const count = f.manageBy==="count"
+        ? Number(f.totalCount)
+        : Number(f.endMonthIdx) - Number(f.startMonthIdx) + 1
+      const contractRes = await fetch("/api/sm-contracts", {
+        method:"POST", headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({
+          name:f.name, business:f.business, type:"installment",
+          amount:Number(f.amount), method:f.method,
+          start_month_idx:Number(f.startMonthIdx), total_count:count, note:f.note, status:"active",
+        }),
+      })
+      const newContract = await contractRes.json()
+      setContracts(prev=>[...prev, newContract])
+
+      const rows = []
+      for (let i=0; i<count; i++) {
+        const m = newContract.start_month_idx + i
+        if (m > 11) break
+        rows.push({ contract_id:newContract.id, name:newContract.name, business:newContract.business,
+          month_idx:m, amount:newContract.amount, method:newContract.method, type:"分割",
+          installment_no:i+1, total_installments:count, paid:m < CURRENT_M })
       }
+      const pRes = await fetch("/api/sm-payments", {
+        method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(rows),
+      })
+      const newPays = await pRes.json()
+      setPayments(prev=>[...prev, ...newPays])
+
+    } else if (wizard.wizType==="single") {
+      const res = await fetch("/api/sm-singles", {
+        method:"POST", headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({ ...f, month_idx:Number(f.monthIdx), amount:Number(f.amount) }),
+      })
+      const row = await res.json()
+      setSingles(prev=>[...prev, row])
 
     } else {
-      const body = { category:f.category, name:f.name, amount:Number(f.amount), note:f.note }
-      if (isEdit) {
-        await fetch(`/api/sm-expenses/${wizard.editId}`, {
-          method:"PUT", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body),
-        })
-        setExpenses(prev => prev.map(e => e.id===wizard.editId ? {...body, id:wizard.editId} : e))
-      } else {
-        const res = await fetch("/api/sm-expenses", {
-          method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body),
-        })
-        const newExp = await res.json()
-        setExpenses(prev=>[...prev, newExp])
-      }
+      const isRecurring = f.isRecurring !== false
+      const res = await fetch("/api/sm-expenses", {
+        method:"POST", headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({
+          ...f,
+          amount: Number(f.amount),
+          is_recurring: isRecurring,
+          month_idx: isRecurring ? null : Number(f.monthIdx),
+        }),
+      })
+      const row = await res.json()
+      setExpenses(prev=>[...prev, row])
     }
 
     setSaving(false)
@@ -602,10 +522,12 @@ export default function SalesManager({
           <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
             <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:12 }}>
               {[
-                { label:"確定売上（年）",   value:"¥"+fmtM(paidRev),             sub:"入金済みのみ",             color:C.primary, Icon:TrendingUp },
-                { label:"年間見込み売上",  value:"¥"+fmtM(projectedRev),          sub:"確定+未収+将来予定",        color:C.success, Icon:Activity   },
-                { label:"未収金",          value:"¥"+fmtM(uncollectedTotal),      sub:`${uncollectedPayments.length}件 要確認`, color:C.warn, Icon:AlertCircle },
-                { label:"継続収入（月額）", value:fmtY(contracts.filter(c=>c.type==="recurring"&&c.status==="active").reduce((a,c)=>a+c.amount,0)), sub:`${contracts.filter(c=>c.type==="recurring"&&c.status==="active").length}件継続中`, color:C.primary, Icon:RefreshCw },
+                { label:"確定売上（年）",   value:"¥"+fmtM(paidRev),         sub:"入金済みのみ",       color:C.primary, Icon:TrendingUp },
+                { label:"見込み売上（年）",  value:"¥"+fmtM(projectedRev),      sub:"未収+将来分含む",    color:C.primary, Icon:TrendingUp },
+                { label:"未収金",          value:"¥"+fmtM(uncollectedTotal), sub:`${uncollectedPayments.length}件 未入金`, color:C.warn, Icon:AlertCircle },
+                { label:"年間純利益（確定）", value:(totalProfit<0?"-":"")+"¥"+fmtM(totalProfit), sub:totalProfit>=0?"黒字":"赤字", color:totalProfit>=0?C.success:C.danger, Icon:Activity },
+                { label:"見込み利益（年）",  value:(projectedProfit<0?"-":"")+"¥"+fmtM(projectedProfit), sub:projectedProfit>=0?"黒字見込み":"赤字見込み", color:projectedProfit>=0?C.success:C.danger, Icon:Activity },
+                { label:"継続収入（月額）", value:fmtY(contracts.filter(c=>c.type==="recurring"&&c.status==="active").reduce((a,c)=>a+c.amount,0)), sub:`${contracts.filter(c=>c.type==="recurring"&&c.status==="active").length}件継続中`, color:C.success, Icon:RefreshCw },
               ].map((k,i) => (
                 <Card key={i} style={{ borderTop:`2px solid ${k.color}`, padding:"14px 18px" }}>
                   <div style={{ display:"flex", alignItems:"center", gap:5, marginBottom:8 }}>
@@ -620,9 +542,9 @@ export default function SalesManager({
 
             <Card>
               <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12 }}>
-                <SL Icon={BarChart2}>月別売上（確定 + 未収 + 見込み）</SL>
+                <SL Icon={BarChart2}>月別売上（確定 + 未収）</SL>
                 <div style={{ display:"flex", gap:12, fontSize:11, color:C.muted }}>
-                  {[{c:C.primary,l:"確定"},{c:C.warn,l:"未収"},{c:C.success+"99",l:"見込み"}].map(({c,l})=>(
+                  {[{c:C.primary,l:"確定"},{c:C.warn,l:"未収"}].map(({c,l})=>(
                     <span key={l} style={{ display:"flex", alignItems:"center", gap:4 }}>
                       <span style={{ width:8,height:8,borderRadius:2,background:c,display:"inline-block" }} />{l}
                     </span>
@@ -635,38 +557,24 @@ export default function SalesManager({
                   <XAxis dataKey="month" tick={{ fill:C.muted, fontSize:11 }} axisLine={false} tickLine={false} />
                   <YAxis tick={{ fill:C.muted, fontSize:10 }} axisLine={false} tickLine={false} tickFormatter={v=>"¥"+fmtM(v)} />
                   <Tooltip content={<SalesTooltip expMo={totalExpMo} />} />
-                  <Bar dataKey="確定売上" fill={C.primary} radius={[0,0,0,0]} stackId="a" />
-                  <Bar dataKey="未収金"   fill={C.warn}    radius={[0,0,0,0]} stackId="a" />
-                  <Bar dataKey="見込み"   fill={C.success+"88"} radius={[3,3,0,0]} stackId="a" />
+                  <Bar dataKey="確定売上" fill={C.primary} radius={[3,3,0,0]} stackId="a" />
+                  <Bar dataKey="未収金" fill={C.warn} radius={[3,3,0,0]} stackId="a" />
                 </BarChart>
               </ResponsiveContainer>
             </Card>
 
             <Card>
-              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12 }}>
-                <SL Icon={Activity}>月別利益推移</SL>
-                <div style={{ display:"flex", gap:12, fontSize:11, color:C.muted }}>
-                  {[{c:C.warn,l:"確定利益"},{c:C.success,l:"見込み利益",dash:true}].map(({c,l,dash})=>(
-                    <span key={l} style={{ display:"flex", alignItems:"center", gap:4 }}>
-                      <span style={{ width:16, height:2, background:c, display:"inline-block", borderRadius:1,
-                        backgroundImage:dash?"repeating-linear-gradient(90deg,"+c+" 0,"+c+" 4px,transparent 4px,transparent 7px)":"none" }} />{l}
-                    </span>
-                  ))}
-                </div>
-              </div>
+              <SL Icon={Activity}>月別利益推移（確定ベース）</SL>
               <ResponsiveContainer width="100%" height={150}>
                 <LineChart data={profitTrend}>
                   <CartesianGrid strokeDasharray="3 3" stroke={C.border} vertical={false} />
                   <XAxis dataKey="month" tick={{ fill:C.muted, fontSize:11 }} axisLine={false} tickLine={false} />
                   <YAxis tick={{ fill:C.muted, fontSize:10 }} axisLine={false} tickLine={false} tickFormatter={v=>(v>=0?"¥":"-¥")+fmtM(Math.abs(v))} />
                   <Tooltip content={<ProfitTooltip target={300000} />} />
-                  <Line type="monotone" dataKey="確定利益" stroke={C.warn} strokeWidth={2.5}
-                    dot={{ fill:C.warn, r:3, strokeWidth:0 }} activeDot={{ r:5 }} connectNulls={false} />
-                  <Line type="monotone" dataKey="見込み利益" stroke={C.success} strokeWidth={2}
-                    strokeDasharray="5 4" dot={{ fill:C.success, r:3, strokeWidth:0 }} activeDot={{ r:5 }} connectNulls={false} />
+                  <Line type="monotone" dataKey="利益" stroke={C.warn} strokeWidth={2.5}
+                    dot={{ fill:C.warn, r:3, strokeWidth:0 }} activeDot={{ r:5 }} />
                 </LineChart>
               </ResponsiveContainer>
-              <div style={{ fontSize:11, color:C.muted, marginTop:4 }}>破線＝見込み（継続・分割の将来予定を含む）</div>
             </Card>
 
             <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:14 }}>
@@ -821,16 +729,6 @@ export default function SalesManager({
                               <span style={{ fontSize:12, fontWeight:700, fontFamily:MONO, color:e.paid===false?C.warn:C.text }}>
                                 ¥{e.amount.toLocaleString()}
                               </span>
-                              {e.type==="単発" && (
-                                <button onClick={()=>openWizard("single", e)} style={{ background:"none", border:"none", cursor:"pointer", color:C.muted, display:"flex" }}>
-                                  <Pencil size={11} strokeWidth={1.5} />
-                                </button>
-                              )}
-                              {e.type==="単発" && (
-                                <button onClick={()=>deleteSingle(e.id)} style={{ background:"none", border:"none", cursor:"pointer", color:C.muted, display:"flex" }}>
-                                  <Trash2 size={11} strokeWidth={1.5} />
-                                </button>
-                              )}
                             </div>
                           ))}
                         </div>
@@ -898,9 +796,6 @@ export default function SalesManager({
                         ? <GhostBtn small onClick={()=>stopContract(c.id)}><Pause size={12} strokeWidth={1.5} />停止</GhostBtn>
                         : <GhostBtn small onClick={()=>resumeContract(c.id)}><Play size={12} strokeWidth={1.5} />再開</GhostBtn>
                       }
-                      <button onClick={()=>openWizard("recurring", c)} style={{ background:"none", border:"none", cursor:"pointer", color:C.muted }}>
-                        <Pencil size={13} strokeWidth={1.5} />
-                      </button>
                       <button onClick={()=>deleteContract(c.id)} style={{ background:"none", border:"none", cursor:"pointer", color:C.muted }}>
                         <Trash2 size={13} strokeWidth={1.5} />
                       </button>
@@ -936,9 +831,6 @@ export default function SalesManager({
                       <button onClick={()=>setExpandedContract(isExp?null:c.id)} style={{ background:"none", border:"none", cursor:"pointer" }}>
                         <ChevronRight size={14} strokeWidth={1.5} color={C.muted}
                           style={{ transform:isExp?"rotate(90deg)":"none", transition:"transform 0.15s" }} />
-                      </button>
-                      <button onClick={()=>openWizard("installment", c)} style={{ background:"none", border:"none", cursor:"pointer", color:C.muted }}>
-                        <Pencil size={13} strokeWidth={1.5} />
                       </button>
                       <button onClick={()=>deleteContract(c.id)} style={{ background:"none", border:"none", cursor:"pointer", color:C.muted }}>
                         <Trash2 size={13} strokeWidth={1.5} />
@@ -993,20 +885,38 @@ export default function SalesManager({
               </div>
               <Btn onClick={()=>openWizard("expense")}><Plus size={14} strokeWidth={2} />経費を追加</Btn>
             </div>
-            <div style={{ display:"flex", justifyContent:"flex-end", marginBottom:14 }}>
+            <div style={{ display:"flex", justifyContent:"flex-end", gap:10, marginBottom:14, flexWrap:"wrap" }}>
               <div style={{ background:C.danger+"0e", border:`1px solid ${C.danger}33`, borderRadius:8, padding:"10px 18px", display:"flex", alignItems:"center", gap:8 }}>
                 <Receipt size={13} color={C.danger} strokeWidth={1.5} />
-                <span style={{ fontSize:12, color:C.sub }}>月間合計</span>
-                <span style={{ fontSize:20, fontWeight:800, color:C.danger, fontFamily:MONO }}>¥{totalExpMo.toLocaleString()}</span>
+                <span style={{ fontSize:12, color:C.sub }}>月額固定</span>
+                <span style={{ fontSize:18, fontWeight:800, color:C.danger, fontFamily:MONO }}>¥{totalExpMo.toLocaleString()}</span>
+                <span style={{ fontSize:11, color:C.muted }}>/月</span>
+              </div>
+              {oneTimeExpTotal > 0 && (
+                <div style={{ background:C.warn+"0e", border:`1px solid ${C.warn}33`, borderRadius:8, padding:"10px 18px", display:"flex", alignItems:"center", gap:8 }}>
+                  <Receipt size={13} color={C.warn} strokeWidth={1.5} />
+                  <span style={{ fontSize:12, color:C.sub }}>単発合計</span>
+                  <span style={{ fontSize:18, fontWeight:800, color:C.warn, fontFamily:MONO }}>¥{oneTimeExpTotal.toLocaleString()}</span>
+                </div>
+              )}
+              <div style={{ background:C.danger+"18", border:`1px solid ${C.danger}33`, borderRadius:8, padding:"10px 18px", display:"flex", alignItems:"center", gap:8 }}>
+                <span style={{ fontSize:12, color:C.sub }}>年間合計</span>
+                <span style={{ fontSize:18, fontWeight:800, color:C.danger, fontFamily:MONO }}>¥{fmtM(totalExpAnnual)}</span>
               </div>
             </div>
-            <Card style={{ padding:0, overflow:"hidden" }}>
-              <div style={{ display:"grid", gridTemplateColumns:"110px 1fr 120px 1fr 60px", background:C.panel2, padding:"9px 18px" }}>
+            {/* 月額固定経費 */}
+            <Card style={{ padding:0, overflow:"hidden", marginBottom:14 }}>
+              <div style={{ padding:"10px 18px", background:C.panel2, display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+                <span style={{ fontSize:11, fontWeight:700, color:C.muted, letterSpacing:1.5 }}>月額固定</span>
+                <span style={{ fontSize:13, fontWeight:800, fontFamily:MONO, color:C.danger }}>¥{totalExpMo.toLocaleString()} / 月</span>
+              </div>
+              <div style={{ display:"grid", gridTemplateColumns:"110px 1fr 120px 1fr 36px", background:C.panel2, padding:"9px 18px", borderTop:`1px solid ${C.border}` }}>
                 {["カテゴリ","名前","月額","メモ",""].map((h,i) => <TH key={i}>{h}</TH>)}
               </div>
-              {expenses.map(e => (
+              {recurringExps.length === 0 && <div style={{ padding:"18px", textAlign:"center", fontSize:12, color:C.muted }}>登録なし</div>}
+              {recurringExps.map(e => (
                 <div key={e.id}
-                  style={{ display:"grid", gridTemplateColumns:"110px 1fr 120px 1fr 60px", padding:"11px 18px", borderTop:`1px solid ${C.border}`, alignItems:"center" }}
+                  style={{ display:"grid", gridTemplateColumns:"110px 1fr 120px 1fr 36px", padding:"11px 18px", borderTop:`1px solid ${C.border}`, alignItems:"center" }}
                   onMouseEnter={ev=>ev.currentTarget.style.background=C.hover}
                   onMouseLeave={ev=>ev.currentTarget.style.background=""}
                 >
@@ -1014,14 +924,37 @@ export default function SalesManager({
                   <div style={{ fontSize:14, fontWeight:600 }}>{e.name}</div>
                   <div style={{ fontSize:14, fontWeight:700, fontFamily:MONO, color:C.danger }}>¥{e.amount.toLocaleString()}</div>
                   <div style={{ fontSize:12, color:C.muted }}>{e.note||"—"}</div>
-                  <div style={{ display:"flex", gap:4 }}>
-                    <button onClick={()=>openWizard("expense", e)} style={{ background:"none", border:"none", cursor:"pointer", color:C.muted, display:"flex" }}>
-                      <Pencil size={13} strokeWidth={1.5} />
-                    </button>
-                    <button onClick={()=>deleteExpense(e.id)} style={{ background:"none", border:"none", cursor:"pointer", color:C.muted, display:"flex" }}>
-                      <X size={13} strokeWidth={1.5} />
-                    </button>
-                  </div>
+                  <button onClick={()=>deleteExpense(e.id)} style={{ background:"none", border:"none", cursor:"pointer", color:C.muted, display:"flex" }}>
+                    <X size={13} strokeWidth={1.5} />
+                  </button>
+                </div>
+              ))}
+            </Card>
+
+            {/* 単発経費 */}
+            <Card style={{ padding:0, overflow:"hidden" }}>
+              <div style={{ padding:"10px 18px", background:C.panel2, display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+                <span style={{ fontSize:11, fontWeight:700, color:C.muted, letterSpacing:1.5 }}>単発</span>
+                {oneTimeExpTotal > 0 && <span style={{ fontSize:13, fontWeight:800, fontFamily:MONO, color:C.danger }}>¥{oneTimeExpTotal.toLocaleString()} 合計</span>}
+              </div>
+              <div style={{ display:"grid", gridTemplateColumns:"80px 110px 1fr 120px 1fr 36px", background:C.panel2, padding:"9px 18px", borderTop:`1px solid ${C.border}` }}>
+                {["月","カテゴリ","名前","金額","メモ",""].map((h,i) => <TH key={i}>{h}</TH>)}
+              </div>
+              {oneTimeExps.length === 0 && <div style={{ padding:"18px", textAlign:"center", fontSize:12, color:C.muted }}>登録なし</div>}
+              {oneTimeExps.sort((a,b)=>(a.month_idx??0)-(b.month_idx??0)).map(e => (
+                <div key={e.id}
+                  style={{ display:"grid", gridTemplateColumns:"80px 110px 1fr 120px 1fr 36px", padding:"11px 18px", borderTop:`1px solid ${C.border}`, alignItems:"center" }}
+                  onMouseEnter={ev=>ev.currentTarget.style.background=C.hover}
+                  onMouseLeave={ev=>ev.currentTarget.style.background=""}
+                >
+                  <div style={{ fontSize:12, fontWeight:700, color:C.primary }}>{e.month_idx!=null?MONTHS[e.month_idx]:"—"}</div>
+                  <div style={{ fontSize:11, color:C.sub }}>{e.category}</div>
+                  <div style={{ fontSize:14, fontWeight:600 }}>{e.name}</div>
+                  <div style={{ fontSize:14, fontWeight:700, fontFamily:MONO, color:C.danger }}>¥{e.amount.toLocaleString()}</div>
+                  <div style={{ fontSize:12, color:C.muted }}>{e.note||"—"}</div>
+                  <button onClick={()=>deleteExpense(e.id)} style={{ background:"none", border:"none", cursor:"pointer", color:C.muted, display:"flex" }}>
+                    <X size={13} strokeWidth={1.5} />
+                  </button>
                 </div>
               ))}
             </Card>
@@ -1089,7 +1022,7 @@ export default function SalesManager({
             <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:22 }}>
               <div>
                 <div style={{ fontSize:10, color:C.muted, letterSpacing:2, fontWeight:700, marginBottom:6 }}>
-                  {wizard.editId ? "編集" : { recurring:"継続契約を追加", installment:"分割契約を追加", single:"単発売上を追加", expense:"経費を追加" }[wizard.wizType]}
+                  {{ recurring:"継続契約を追加", installment:"分割契約を追加", single:"単発売上を追加", expense:"経費を追加" }[wizard.wizType]}
                 </div>
                 <div style={{ display:"flex", gap:5 }}>
                   {[1,2,3].map(n=>(
@@ -1172,14 +1105,8 @@ export default function SalesManager({
                       ))}
                     </div>
                     <div style={{ background:C.success+"10", border:`1px solid ${C.success}33`, borderRadius:8, padding:"10px 14px" }}>
-                      {wizard.editId ? (
-                        <div style={{ fontSize:11, color:C.success, fontWeight:700 }}>未払い分の金額・名前が一括更新されます</div>
-                      ) : (
-                        <>
-                          <div style={{ fontSize:11, color:C.success, fontWeight:700, marginBottom:2 }}>継続契約として登録されます</div>
-                          <div style={{ fontSize:11, color:C.sub }}>停止するまで毎月の入金予定が自動追加されます。</div>
-                        </>
-                      )}
+                      <div style={{ fontSize:11, color:C.success, fontWeight:700, marginBottom:2 }}>継続契約として登録されます</div>
+                      <div style={{ fontSize:11, color:C.sub }}>停止するまで毎月の入金予定が自動追加されます。</div>
                     </div>
                   </div>
                 )}
@@ -1322,13 +1249,39 @@ export default function SalesManager({
                         </label>
                       </>
                     ) : (
-                      <label style={{ display:"block", marginBottom:12 }}>
-                        <div style={{ fontSize:11, color:C.muted, fontWeight:600, marginBottom:6, letterSpacing:1 }}>カテゴリ</div>
-                        <select value={wizard.form.category||"ツール"} onChange={e=>updateForm("category",e.target.value)}
-                          style={{ width:"100%", background:C.panel2, border:`1px solid ${C.border}`, borderRadius:8, padding:"10px 12px", fontSize:13, fontFamily:FONT, color:C.text }}>
-                          {EXP_CATS.map(c=><option key={c}>{c}</option>)}
-                        </select>
-                      </label>
+                      <>
+                        {/* 月額固定 / 単発 トグル */}
+                        <div style={{ marginBottom:12 }}>
+                          <div style={{ fontSize:11, color:C.muted, fontWeight:600, marginBottom:6, letterSpacing:1 }}>種別</div>
+                          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8 }}>
+                            {[{v:true,l:"月額固定"},{v:false,l:"単発（1回）"}].map(({v,l})=>(
+                              <button key={String(v)} onClick={()=>updateForm("isRecurring",v)} style={{
+                                padding:"10px 8px", borderRadius:8, fontSize:13, fontWeight:700, cursor:"pointer", fontFamily:FONT, transition:"all 0.15s",
+                                border:`2px solid ${wizard.form.isRecurring===v||(!wizard.form.hasOwnProperty("isRecurring")&&v)?C.primary:C.border}`,
+                                background:wizard.form.isRecurring===v||(!wizard.form.hasOwnProperty("isRecurring")&&v)?C.primary+"12":C.panel2,
+                                color:wizard.form.isRecurring===v||(!wizard.form.hasOwnProperty("isRecurring")&&v)?C.primary:C.sub,
+                              }}>{l}</button>
+                            ))}
+                          </div>
+                        </div>
+                        {/* 単発の場合は対象月を選択 */}
+                        {wizard.form.isRecurring === false && (
+                          <label style={{ display:"block", marginBottom:12 }}>
+                            <div style={{ fontSize:11, color:C.muted, fontWeight:600, marginBottom:6, letterSpacing:1 }}>対象月</div>
+                            <select value={wizard.form.monthIdx??CURRENT_M} onChange={e=>updateForm("monthIdx",e.target.value)}
+                              style={{ width:"100%", background:C.panel2, border:`1px solid ${C.border}`, borderRadius:8, padding:"10px 12px", fontSize:13, fontFamily:FONT, color:C.text }}>
+                              {MONTHS.map((m,i)=><option key={i} value={i}>{m}</option>)}
+                            </select>
+                          </label>
+                        )}
+                        <label style={{ display:"block", marginBottom:12 }}>
+                          <div style={{ fontSize:11, color:C.muted, fontWeight:600, marginBottom:6, letterSpacing:1 }}>カテゴリ</div>
+                          <select value={wizard.form.category||"ツール"} onChange={e=>updateForm("category",e.target.value)}
+                            style={{ width:"100%", background:C.panel2, border:`1px solid ${C.border}`, borderRadius:8, padding:"10px 12px", fontSize:13, fontFamily:FONT, color:C.text }}>
+                            {EXP_CATS.map(c=><option key={c}>{c}</option>)}
+                          </select>
+                        </label>
+                      </>
                     )}
                     <label style={{ display:"block", marginBottom:12 }}>
                       <div style={{ fontSize:11, color:C.muted, fontWeight:600, marginBottom:6, letterSpacing:1 }}>名称</div>
@@ -1336,7 +1289,7 @@ export default function SalesManager({
                         style={{ width:"100%", background:C.panel2, border:`1px solid ${C.border}`, borderRadius:8, padding:"10px 12px", fontSize:13, fontFamily:FONT, color:C.text, outline:"none", boxSizing:"border-box" }} />
                     </label>
                     <label style={{ display:"block" }}>
-                      <div style={{ fontSize:11, color:C.muted, fontWeight:600, marginBottom:6, letterSpacing:1 }}>{wizard.wizType==="expense"?"月額":"金額"}</div>
+                      <div style={{ fontSize:11, color:C.muted, fontWeight:600, marginBottom:6, letterSpacing:1 }}>{wizard.wizType==="expense"?(wizard.form.isRecurring===false?"金額（単発）":"月額"):"金額"}</div>
                       <input type="number" value={wizard.form.amount} onChange={e=>updateForm("amount",e.target.value)} placeholder="例: 100000"
                         style={{ width:"100%", background:C.panel2, border:`1px solid ${C.border}`, borderRadius:8, padding:"10px 12px", fontSize:13, fontFamily:MONO, color:C.text, outline:"none", boxSizing:"border-box" }} />
                     </label>
@@ -1373,6 +1326,8 @@ export default function SalesManager({
                       {[
                         wizard.wizType==="single" && ["月", MONTHS[Number(wizard.form.monthIdx)]],
                         wizard.wizType==="single" && ["事業", wizard.form.business],
+                        wizard.wizType==="expense" && ["種別", wizard.form.isRecurring===false?"単発":"月額固定"],
+                        wizard.wizType==="expense" && wizard.form.isRecurring===false && ["対象月", MONTHS[Number(wizard.form.monthIdx??CURRENT_M)]],
                         wizard.wizType==="expense" && ["カテゴリ", wizard.form.category],
                         ["名称", wizard.form.name||"—"],
                         ["金額", "¥"+Number(wizard.form.amount||0).toLocaleString()],
@@ -1394,7 +1349,7 @@ export default function SalesManager({
                 ? <GhostBtn onClick={()=>setWizard(w=>({...w,step:w.step-1}))}><ChevronLeft size={14} strokeWidth={1.5} />戻る</GhostBtn>
                 : <div />}
               {wizard.step<3
-                ? <Btn onClick={()=>setWizard(w=>({...w,step:w.step+1}))} disabled={!wizard.form.amount||!wizard.form.name}>次へ<ChevronRight size={14} strokeWidth={1.5} /></Btn>
+                ? <Btn onClick={()=>setWizard(w=>({...w,step:w.step+1}))} disabled={!wizard.form.amount&&!wizard.form.name}>次へ<ChevronRight size={14} strokeWidth={1.5} /></Btn>
                 : <Btn onClick={saveWizard} color={C.success} disabled={saving}><Check size={14} strokeWidth={2} />{saving?"保存中...":"保存する"}</Btn>}
             </div>
           </div>
