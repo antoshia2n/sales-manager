@@ -587,7 +587,14 @@ export default function SalesManager({
     } else if (wizard.wizType==="single") {
       const res = await fetch("/api/sm-singles", {
         method:"POST", headers:{"Content-Type":"application/json"},
-        body: JSON.stringify({ ...f, month_idx:Number(f.monthIdx), amount:Number(f.amount) }),
+        body: JSON.stringify({
+          month_idx: Number(f.monthIdx),
+          name:      f.name,
+          business:  f.business,
+          amount:    Number(f.amount),
+          method:    f.method,
+          note:      f.note || "",
+        }),
       })
       const row = await res.json()
       setSingles(prev=>[...prev, row])
@@ -597,10 +604,12 @@ export default function SalesManager({
       const res = await fetch("/api/sm-expenses", {
         method:"POST", headers:{"Content-Type":"application/json"},
         body: JSON.stringify({
-          ...f,
-          amount: Number(f.amount),
+          category:     f.category || "その他",
+          name:         f.name,
+          amount:       Number(f.amount),
+          note:         f.note || "",
           is_recurring: isRecurring,
-          month_idx: isRecurring ? null : Number(f.monthIdx),
+          month_idx:    isRecurring ? null : Number(f.monthIdx),
         }),
       })
       const row = await res.json()
